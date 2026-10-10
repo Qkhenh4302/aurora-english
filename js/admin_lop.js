@@ -1,14 +1,19 @@
-/* ================= Khu giáo viên: Lịch & điểm danh · Lớp học · Học phí =================
-   Dùng phần tính toán trong lop_core.js. Mọi thay đổi lưu ngay và tự đồng bộ lên mạng. */
+/* ================= Khu giáo viên (bản gọn): Lớp học · Học phí · Phiếu báo · Cài đặt =================
+   Phần tính toán ở lop_core.js. Mọi thay đổi lưu ngay, tự đồng bộ lên mạng, không xoá dữ liệu tháng cũ. */
 (function () {
   'use strict';
   var LN = window.LN, store = LN.store, esc = LN.esc, ic = LN.ic, toast = LN.toast, K = LN.lopCore;
   var DOWS = K.DOWS, DOWS_S = K.DOWS_S;
+  var BANK0 = { bank: 'Vietcombank', holder: 'NGUYEN THI QUYEN', qr: '00020101021138630010A000000727013300069704360119QRGD0101001239030020208QRIBFTTA53037045802VN6304E106', amt: true };
+
+  /* ---------- tiện ích ---------- */
   function money(n) { return (Math.round(n) || 0).toLocaleString('vi-VN') + 'đ'; }
   function today() { return K.iso(new Date()); }
+  function nowHm() { var d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
   function dmy(s) { var p = String(s).split('-'); return +p[2] + '/' + +p[1]; }
   function dmyy(s) { var p = String(s).split('-'); return +p[2] + '/' + +p[1] + '/' + p[0]; }
   function ymTxt(ym) { return 'Tháng ' + (+ym.slice(5)) + '/' + ym.slice(0, 4); }
+  function mTxt(ym) { return 'tháng ' + (+ym.slice(5)); }
   function classes() { return store.get('ln_classes', {}) || {}; }
   function clsList(all) { var c = classes(); return Object.keys(c).map(function (k) { return c[k]; }).filter(function (x) { return all || !x.archived; }).sort(function (a, b) { return (a.order || 0) - (b.order || 0) || String(a.name).localeCompare(String(b.name), 'vi', { numeric: true }); }); }
   function saveCls(cl) { var c = classes(); c[cl.id] = cl; store.set('ln_classes', c); }
@@ -16,406 +21,502 @@
   function saveCd(id, d) { store.set('ln_cl_' + id, d); }
   function pays() { return store.get('ln_pay', {}) || {}; }
   function payOf(sid) { return pays()[sid] || []; }
-  function txtColor(hex) { var h = String(hex || '#ccc').replace('#', ''); if (h.length < 6) return '#3B2A3A'; var r = parseInt(h.substr(0, 2), 16), g = parseInt(h.substr(2, 2), 16), b = parseInt(h.substr(4, 2), 16); return (r * 299 + g * 587 + b * 114) / 1000 < 140 ? '#fff' : '#3B2A3A'; }
-  function schedTxt(cl, at) {
-    at = at || today();
-    var act = (cl.slots || []).filter(function (s) { return (!s.from || s.from <= at || true) && (!s.to || s.to >= at); });
-    return act.sort(function (a, b) { return ((a.dow + 6) % 7) - ((b.dow + 6) % 7); }).map(function (s) { return DOWS_S[s.dow] + ' ' + K.timeTxt(s.start) + '–' + K.timeTxt(s.end); }).join(' · ') || 'Chưa có lịch';
-  }
-  function billTxt(cl) { var b = cl.billing || {}; return money(cl.price) + '/buổi · ' + (b.mode === 'pack' ? 'đóng theo gói ' + (b.size || 5) + ' buổi' : 'đóng theo tháng'); }
-  function stuOf(sid) { var r = null; clsList(true).some(function (cl) { return (cl.students || []).some(function (s) { if (s.id === sid) { r = { cl: cl, st: s }; return true; } return false; }); }); return r; }
-  function ledgerOf(cl, st, untilYm) { return K.ledger(K.periods(cl, cdata(cl.id), st, today(), untilYm), payOf(st.id), today()); }
-  var STL = { paid: ['Đã đóng đủ', 'tag-mint'], partial: ['Đóng thiếu', 'tag-yel'], overdue: ['Quá hạn', 'tag-red'], due: ['Chờ đóng', 'tag'] };
-  function stTag(s) { var x = STL[s] || STL.due; return '<span class="tag ' + x[1] + '">' + x[0] + '</span>'; }
+  function bank() { return Object.assign({}, BANK0, store.get('ln_bank', null) || {}); }
   function uname(n) { return String(n || '').trim().replace(/Đ/g, 'D').replace(/đ/g, 'd').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
   function shell(active, body) { LN.adminShell(active, body); }
+  function curStudents(cl, ym) { return (cl.students || []).filter(function (st) { return (!st.left || st.left >= ym + '-01') && (!st.joined || st.joined <= K.monthDays(ym).pop()); }); }
+  function schedTxt(cl) {
+    var td = today();
+    return (cl.slots || []).filter(function (s) { return !s.to || s.to >= td; }).sort(function (a, b) { return ((a.dow + 6) % 7) - ((b.dow + 6) % 7); })
+      .map(function (s) { return DOWS_S[s.dow] + ' ' + K.timeTxt(s.start) + '–' + K.timeTxt(s.end) + (s.from && s.from > td ? ' (từ ' + dmy(s.from) + ')' : ''); }).join(' · ') || 'Chưa có lịch';
+  }
+  function ruleTxt(cl) { var b = cl.billing || {}, p = K.priceOf(cl, null, today()); return money(p) + '/buổi · ' + (b.mode === 'pack' ? 'đóng theo gói ' + (b.size || 5) + ' buổi' : 'tính theo số buổi đi học trong tháng'); }
+  function stuOf(sid) { var r = null; clsList(true).some(function (cl) { return (cl.students || []).some(function (s) { if (s.id === sid) { r = { cl: cl, st: s }; return true; } return false; }); }); return r; }
+  function report(cl, st, ym) { return K.monthReport(cl, cdata(cl.id), st, payOf(st.id), ym, today()); }
+  function sessDone(s) { var td = today(); return s.date < td || (s.date === td && K.hm(s.start) <= nowHm()); }
+  function refresh() { var y = window.scrollY, g = document.querySelector('.sh-wrap'), sx = g ? g.scrollLeft : 0; LN.adminRoute(location.hash.replace(/^#\/admin\/?/, '').split('/').filter(Boolean)); window.scrollTo(0, y); var g2 = document.querySelector('.sh-wrap'); if (g2 && sx) g2.scrollLeft = sx; }
 
-  /* ================= Nhập dữ liệu từ file "Check điểm danh" ================= */
-  function seedPending() { return window.LOP_SEED && !store.get('ln_seed_done', null); }
+  /* ---------- mã QR ---------- */
+  function qrSvg(text, px) {
+    try {
+      var q = new window.QRCodeLib(-1, window.QRErrorCorrectLevel.M); q.addData(text); q.make();
+      var n = q.getModuleCount(), m = 3, d = '';
+      for (var r = 0; r < n; r++) for (var c = 0; c < n; c++) if (q.isDark(r, c)) d += 'M' + (c + m) + ' ' + (r + m) + 'h1v1h-1z';
+      return '<svg class="qr" width="' + px + '" height="' + px + '" viewBox="0 0 ' + (n + 2 * m) + ' ' + (n + 2 * m) + '" shape-rendering="crispEdges" role="img" aria-label="Mã QR chuyển khoản"><rect width="100%" height="100%" fill="#fff"/><path d="' + d + '" fill="#000"/></svg>';
+    } catch (e) { return '<p class="small muted">Không tạo được mã QR</p>'; }
+  }
+  function payNote(st, ym) { return 'HP T' + (+ym.slice(5)) + ' ' + (st.user || uname(st.name)); }
+
+  /* ================= Nhập dữ liệu từ file điểm danh (tự chạy 1 lần) ================= */
   function runSeed() {
-    var S = window.LOP_SEED, users = LN.users(), made = [], skipped = [], dup = [], linked = [];
-    var dupes = S.dupes || {}, c = classes(), pay = pays();
+    var S = window.LOP_SEED; if (!S) return null;
+    var users = LN.users(), c = classes(), made = [], linked = [], clash = [];
     S.classes.forEach(function (x, i) {
-      var cl = { id: x.id, name: x.name, grade: x.grade, color: x.color, price: x.price, billing: x.billing, slots: x.slots, order: i, created: Date.now(),
-        students: x.students.map(function (s) { return { id: s.id, name: s.name, user: null, joined: s.joined }; }) };
-      cl.students.forEach(function (s, j) {
-        var u = x.students[j].user;
-        if (dupes[u]) { dup.push({ name: s.name, cls: x.name, user: u }); return; }
-        if (users[u]) {
-          if ((users[u].name || '').trim() === s.name.trim() && +users[u].grade === +x.grade) { s.user = u; linked.push(u); }
-          else skipped.push({ name: s.name, cls: x.name, user: u, other: users[u].name });
-          return;
-        }
+      var cl = c[x.id];
+      if (!cl) cl = c[x.id] = { id: x.id, name: x.name, grade: x.grade, color: x.color, price: x.price, billing: x.billing, slots: x.slots, order: i, created: Date.now(), students: [] };
+      x.students.forEach(function (s) {
+        var cur = cl.students.filter(function (y) { return y.id === s.id; })[0];
+        if (!cur) { cur = { id: s.id, name: s.name, user: null, joined: s.joined }; cl.students.push(cur); }
+        if (cur.user) return;
+        var u = s.user, ex = users[u];
+        if (ex && (ex.name || '').trim() === s.name.trim()) { cur.user = u; linked.push(u); return; }
+        if (ex) { clash.push({ name: s.name, cls: x.name, user: u }); return; }
         users[u] = { name: s.name, grade: x.grade, pass: LN.hash(u + ':123456'), mail: '', created: Date.now(), last: 0, status: 'active', byAdmin: true, cls: x.id, joined: today() };
-        s.user = u; made.push(u);
+        cur.user = u; made.push(u);
       });
-      if (!c[x.id]) c[x.id] = cl; else { // lớp đã có: chỉ bổ sung học sinh chưa có
-        cl.students.forEach(function (s) { if (!c[x.id].students.some(function (y) { return y.id === s.id; })) c[x.id].students.push(s); });
-      }
       var cd = cdata(x.id);
       Object.keys(x.att || {}).forEach(function (k) { cd.att[k] = Object.assign({}, x.att[k], cd.att[k] || {}); });
-      Object.keys(x.off || {}).forEach(function (k) { if (cd.off[k] == null) cd.off[k] = x.off[k]; });
+      Object.keys(x.off || {}).forEach(function (k) { if (cd.off[k] == null && !cd.att[k]) cd.off[k] = 'Lớp nghỉ'; });
       saveCd(x.id, cd);
     });
     store.set('ln_users', users); store.set('ln_classes', c);
-    var rep = { at: Date.now(), made: made, linked: linked, skipped: skipped, dup: dup };
-    store.set('ln_seed_done', rep); return rep;
+    var rep = { at: Date.now(), made: made, linked: linked, clash: clash, renamed: S.renamed || [] };
+    store.set('ln_seed_v', { v: S.v || 2, rep: rep }); return rep;
   }
-  function seedReport(rep) {
-    return '<div class="card lp-rep"><h2>✅ Đã nhập dữ liệu từ file điểm danh</h2><p>Tạo <b>' + rep.made.length + '</b> tài khoản học sinh (mật khẩu <b>123456</b>)' + (rep.linked.length ? ', nối <b>' + rep.linked.length + '</b> tài khoản đã có' : '') + '.</p>' +
-      (rep.dup.length ? '<div class="note note-yel" style="margin-top:10px"><b>⚠ Trùng tên đăng nhập – chưa tạo tài khoản, cô xử lý giúp:</b><ul>' + rep.dup.map(function (d) { return '<li><b>' + esc(d.name) + '</b> (' + esc(d.cls) + ') → <code>' + esc(d.user) + '</code></li>'; }).join('') + '</ul><p class="small">Các bé này vẫn có trong lớp, điểm danh và học phí bình thường. Bấm vào tên bé → <b>Tạo tài khoản</b> với tên đăng nhập khác (vd. thêm số lớp).</p></div>' : '') +
-      (rep.skipped.length ? '<div class="note note-yel" style="margin-top:10px"><b>⚠ Tên đăng nhập đã thuộc về người khác:</b><ul>' + rep.skipped.map(function (d) { return '<li>' + esc(d.name) + ' (' + esc(d.cls) + '): <code>' + esc(d.user) + '</code> đang là của “' + esc(d.other) + '”</li>'; }).join('') + '</ul></div>' : '') +
-      '<details style="margin-top:10px"><summary class="small">Danh sách tài khoản đã tạo</summary><p class="small" style="line-height:1.9">' + rep.made.map(function (u) { return '<code>' + esc(u) + '</code>'; }).join(' ') + '</p></details></div>';
+  function ensureSeed() {
+    var S = window.LOP_SEED, sv = store.get('ln_seed_v', null);
+    if (!S || (sv && sv.v >= (S.v || 2))) return 'ok';
+    if (LN.cloud && LN.cloud.on && !LN.cloud.pulled) { LN._waitPull = true; return 'wait'; }
+    runSeed(); return 'ok';
   }
 
-  /* ================= Bảng phụ: điểm danh một buổi ================= */
-  function modal(html) {
+  /* ================= Bảng phụ (modal) ================= */
+  function modal(html, cls) {
     closeModal(); var m = document.createElement('div'); m.className = 'lp-modal'; m.id = 'lp-modal';
-    m.innerHTML = '<div class="lp-sheet" role="dialog" aria-modal="true"><button class="lp-x" data-act="lp-close" aria-label="Đóng">✕</button>' + html + '</div>';
+    m.innerHTML = '<div class="lp-sheet ' + (cls || '') + '" role="dialog" aria-modal="true"><button class="lp-x" data-act="lp-close" aria-label="Đóng">✕</button>' + html + '</div>';
     m.addEventListener('click', function (e) { if (e.target === m) closeModal(); }); document.body.appendChild(m); document.body.classList.add('lp-noscroll');
+    return m;
   }
   function closeModal() { var m = document.getElementById('lp-modal'); if (m) m.remove(); document.body.classList.remove('lp-noscroll'); }
+  function field(id, label, input) { return '<div class="field"><label for="' + id + '">' + label + '</label>' + input + '</div>'; }
+
+  /* ---- Điểm danh một buổi ---- */
   var SESS = null;
   function sessModal(cid, key) {
     var cl = classes()[cid]; if (!cl) return; var cd = cdata(cid), date = key.split('@')[0];
-    var s = K.sessions(cl, cd, date, date).filter(function (x) { return x.key === key; })[0] || { key: key, date: date, start: key.split('@')[1], end: '' };
-    var sts = (cl.students || []).filter(function (st) { return K.activeOn(st, date); }), row = cd.att[key] || {}, closed = cd.closed[K.ymOf(date)];
+    var s = K.sessions(cl, cd, date, date).filter(function (x) { return x.key === key; })[0] || { key: key, date: date, start: key.split('@')[1], end: '', extra: true };
+    var sts = (cl.students || []).filter(function (st) { return K.activeOn(st, date); }), row = cd.att[key] || {};
     var pres = sts.filter(function (st) { return row[st.id] === 1; }).length;
     SESS = { cid: cid, key: key };
-    var h = '<div class="lp-mh" style="--c:' + esc(cl.color) + '"><span class="lp-dot"></span><div><h2>' + esc(cl.name) + '</h2><p>' + DOWS[K.dow(date)] + ', ' + dmyy(date) + ' · ' + K.timeTxt(s.start) + (s.end ? '–' + K.timeTxt(s.end) : '') + (s.extra ? ' · <b>buổi học thêm</b>' : '') + '</p></div></div>';
-    if (closed) h += '<div class="note note-yel">🔒 ' + ymTxt(K.ymOf(date)) + ' đã chốt học phí. Mở chốt ở trang lớp nếu cần sửa.</div>';
-    if (s.off) h += '<div class="note note-yel" style="margin:10px 0">🚫 Buổi này <b>lớp nghỉ</b>' + (s.note ? ': ' + esc(s.note) : '') + ' – không tính học phí.</div><button class="btn" data-act="lp-unoff">Học lại buổi này</button>';
+    var h = '<div class="lp-mh" style="--c:' + esc(cl.color) + '"><span class="lp-dot"></span><div><h2>' + esc(cl.name) + '</h2><p>' + DOWS[K.dow(date)] + ', ' + dmyy(date) + ' · ' + K.timeTxt(s.start) + (s.end ? '–' + K.timeTxt(s.end) : '') + (s.extra ? ' · <b>buổi thêm</b>' : '') + '</p></div></div>';
+    if (s.off) h += '<div class="note note-yel" style="margin:6px 0 12px">🚫 Buổi này <b>lớp nghỉ</b>' + (s.note && s.note !== 'Lớp nghỉ' ? ': ' + esc(s.note) : '') + ' – không tính học phí.</div><button class="btn btn-pink" data-act="lp-unoff">↩ Học lại buổi này</button>';
     else {
-      h += '<div class="lp-mbar"><span><b>' + pres + '</b>/' + sts.length + ' có mặt</span><button class="btn btn-sm btn-mint" data-act="lp-allp"' + (closed ? ' disabled' : '') + '>✅ Tất cả có mặt</button></div>' +
+      h += '<div class="lp-mbar"><span><b>' + pres + '</b>/' + sts.length + ' có mặt</span><button class="btn btn-sm btn-mint" data-act="lp-allp">✅ Cả lớp có mặt</button></div>' +
         '<div class="lp-att">' + sts.map(function (st) {
           var v = row[st.id];
-          return '<div class="lp-arow"><a href="#/admin/hs/' + esc(st.id) + '" class="lp-an">' + esc(st.name) + '</a><div class="lp-ab">' +
-            [[1, '✅', 'Có mặt'], [0, '❌', 'Vắng'], [2, '🟡', 'Có phép']].map(function (o) { return '<button type="button" class="lp-b v' + o[0] + (v === o[0] ? ' on' : '') + '" data-act="lp-mark" data-s="' + esc(st.id) + '" data-v="' + o[0] + '"' + (closed ? ' disabled' : '') + ' title="' + o[2] + '">' + o[1] + '<span>' + o[2] + '</span></button>'; }).join('') + '</div></div>';
-        }).join('') + '</div><p class="tiny muted">Chỉ buổi <b>✅ có mặt</b> được tính học phí (giống file Excel: 1 = tính, 0 = không tính).</p>' +
-        '<div class="lp-mf"><button class="btn btn-sm" data-act="lp-off">🚫 Lớp nghỉ buổi này</button><button class="btn btn-sm" data-act="lp-move">🔁 Dời sang ngày khác</button></div>';
+          return '<div class="lp-arow"><span class="lp-an">' + esc(st.name) + '</span><div class="lp-ab">' +
+            [[1, '✅', 'Có mặt'], [0, '❌', 'Vắng'], [2, '🟡', 'Có phép']].map(function (o) { return '<button type="button" class="lp-b v' + o[0] + (v === o[0] ? ' on' : '') + '" data-act="lp-mark" data-s="' + esc(st.id) + '" data-v="' + o[0] + '" title="' + o[2] + '">' + o[1] + '<span>' + o[2] + '</span></button>'; }).join('') + '</div></div>';
+        }).join('') + '</div><p class="tiny muted" style="margin-top:8px">Chỉ buổi ✅ có mặt được tính học phí.</p>';
     }
+    h += '<details class="lp-more"><summary>Đổi buổi học…</summary><div class="lp-mf">' +
+      (s.off ? '' : '<button class="btn btn-sm" data-act="lp-offform">🚫 Lớp nghỉ buổi này</button>') +
+      '<button class="btn btn-sm" data-act="lp-moveform">🔁 Dời sang ngày khác</button>' +
+      (s.extra ? '<button class="btn btn-sm btn-red" data-act="lp-delsess">🗑 Xoá buổi thêm này</button>' : '') + '</div><div id="lp-sub"></div></details>';
     modal(h);
   }
-  function refresh() { var h = location.hash; LN.adminRoute(h.replace(/^#\/admin\/?/, '').split('/').filter(Boolean)); }
 
-  /* ================= Trang: Lịch & điểm danh ================= */
-  function weekStart(d) { var x = K.parse(d), w = (x.getDay() + 6) % 7; x.setDate(x.getDate() - w); return K.iso(x); }
-  function viewLich(ws) {
-    if (seedPending()) return viewLop();
-    ws = /^\d{4}-\d{2}-\d{2}$/.test(ws || '') ? weekStart(ws) : weekStart(today());
-    var days = []; for (var i = 0; i < 7; i++) days.push(K.addDays(ws, i));
-    var cls = clsList(), td = today(), byDay = {}, todays = [], unmarked = 0;
-    cls.forEach(function (cl) {
-      var cd = cdata(cl.id);
-      K.sessions(cl, cd, days[0], days[6]).forEach(function (s) {
-        var sts = (cl.students || []).filter(function (st) { return K.activeOn(st, s.date); }), r = cd.att[s.key] || {}, marked = sts.filter(function (st) { return r[st.id] != null; }).length, pres = sts.filter(function (st) { return r[st.id] === 1; }).length;
-        var it = { cl: cl, s: s, n: sts.length, marked: marked, pres: pres };
-        (byDay[s.date] = byDay[s.date] || []).push(it); if (s.date === td) todays.push(it);
-        if (s.date < td && !s.off && marked < sts.length) unmarked++;
-      });
+  /* ---- Thêm buổi học ---- */
+  function addSessModal(cid) {
+    var cl = classes()[cid], sl = (cl.slots || [])[0] || { start: '17:00', end: '18:30' };
+    modal('<h2>＋ Thêm buổi học</h2><p class="muted">' + esc(cl.name) + ' – buổi học bù, học thêm… Buổi thêm được điểm danh và tính học phí như buổi thường.</p><form id="lp-addsess">' +
+      '<div class="two">' + field('as-d', 'Ngày', '<input class="inp" type="date" id="as-d" name="d" value="' + today() + '" required>') + field('as-s', 'Bắt đầu', '<input class="inp" type="time" id="as-s" name="s" value="' + sl.start + '" required>') + field('as-e', 'Kết thúc', '<input class="inp" type="time" id="as-e" name="e" value="' + sl.end + '">') + '</div>' +
+      field('as-n', 'Ghi chú (không bắt buộc)', '<input class="inp" id="as-n" name="n" placeholder="vd. Học bù buổi nghỉ lễ">') + '<button class="btn btn-lg btn-pink" type="submit">Thêm buổi</button></form>');
+    document.getElementById('lp-addsess').addEventListener('submit', function (ev) {
+      ev.preventDefault(); var f = ev.target, d = f.d.value, s = f.s.value; if (!d || !s) return;
+      var cd = cdata(cid), k = d + '@' + s;
+      if (K.sessions(cl, cd, d, d).some(function (x) { return x.key === k && !x.off; })) { toast('Đã có buổi học lúc này rồi.'); return; }
+      delete cd.off[k]; cd.extra[k] = { end: f.e.value, note: f.n.value.trim() || 'Buổi thêm' }; saveCd(cid, cd);
+      closeModal(); toast('Đã thêm buổi ' + dmyy(d)); LN.go('#/admin/lop/' + cid + '/' + K.ymOf(d));
+      if (location.hash === '#/admin/lop/' + cid + '/' + K.ymOf(d)) refresh();
     });
-    function block(it, big) {
-      var cl = it.cl, s = it.s, st = s.off ? '<em>Nghỉ</em>' : it.marked >= it.n && it.n ? '✅ ' + it.pres + '/' + it.n : s.date <= td ? '<em class="warn">Chưa điểm danh</em>' : it.n + ' học sinh';
-      return '<button type="button" class="lp-blk' + (s.off ? ' off' : '') + (big ? ' big' : '') + '" style="--c:' + esc(cl.color) + ';--t:' + txtColor(cl.color) + '" data-act="lp-sess" data-c="' + esc(cl.id) + '" data-k="' + esc(s.key) + '"><b>' + esc(cl.name) + '</b><span>' + K.timeTxt(s.start) + (s.end ? '–' + K.timeTxt(s.end) : '') + '</span><small>' + st + '</small></button>';
-    }
-    var head = '<div class="chead"><div><h1>Lịch & điểm danh</h1><p class="muted">Bấm vào một buổi để điểm danh. Lịch các tuần sau tự điền theo lịch cố định của từng lớp.</p></div>' +
-      '<div class="lp-wnav"><a class="btn btn-sm" href="#/admin/lich/' + K.addDays(ws, -7) + '">‹</a><a class="btn btn-sm' + (ws === weekStart(td) ? ' btn-pink' : '') + '" href="#/admin/lich">Tuần này</a><a class="btn btn-sm" href="#/admin/lich/' + K.addDays(ws, 7) + '">›</a></div></div>';
-    var tday = '<div class="card lp-today"><h2>Hôm nay · ' + DOWS[K.dow(td)] + ' ' + dmyy(td) + '</h2>' + (todays.length ? '<div class="lp-tl">' + todays.sort(function (a, b) { return K.hm(a.s.start) - K.hm(b.s.start); }).map(function (it) { return block(it, true); }).join('') + '</div>' : '<p class="muted">Hôm nay không có lớp nào.</p>') +
-      (unmarked && ws === weekStart(td) ? '<p class="small" style="margin-top:8px;color:var(--red-dk)">⚠ Có ' + unmarked + ' buổi đã qua trong tuần chưa điểm danh xong.</p>' : '') + '</div>';
-    var grid = '<div class="card"><div class="chead"><h2>Tuần ' + dmy(days[0]) + ' – ' + dmyy(days[6]) + '</h2><input type="date" class="inp" id="lp-wpick" value="' + ws + '" style="width:auto" aria-label="Chọn tuần"></div><div class="lp-weekw"><div class="lp-week">' + days.map(function (d) {
-      var list = (byDay[d] || []).sort(function (a, b) { return K.hm(a.s.start) - K.hm(b.s.start); });
-      return '<div class="lp-day' + (d === td ? ' td' : '') + '"><div class="lp-dh"><b>' + DOWS[K.dow(d)] + '</b><span>' + dmy(d) + '</span></div>' + (list.length ? list.map(function (it) { return block(it); }).join('') : '<p class="lp-none">—</p>') + '</div>';
-    }).join('') + '</div></div></div>';
-    shell('lich', head + tday + grid + (cls.length ? '' : '<div class="note note-yel">Chưa có lớp nào. Vào <a href="#/admin/lop">Lớp học</a> để thêm lớp.</div>'));
-    var wp = document.getElementById('lp-wpick'); if (wp) wp.addEventListener('change', function () { if (wp.value) LN.go('#/admin/lich/' + wp.value); });
   }
 
-  /* ================= Trang: Lớp học ================= */
-  function viewLop() {
-    var cls = clsList(), td = today(), ym = K.ymOf(td), rep = store.get('ln_seed_done', null);
-    var body = '<div class="chead"><div><h1>Lớp học</h1><p class="muted">Lịch cố định, học sinh, học phí của từng lớp. Bấm vào lớp để xem bảng điểm danh theo tháng.</p></div><button class="btn btn-pink" data-act="lp-newcls">' + ic('plus', 18) + 'Thêm lớp</button></div>';
-    if (seedPending()) {
-      var S = window.LOP_SEED, n = S.classes.reduce(function (s, c) { return s + c.students.length; }, 0);
-      body += '<div class="card lp-seed"><h2>📥 Nhập dữ liệu từ file “Check điểm danh”</h2><p>Sẵn sàng nhập <b>' + S.classes.length + ' lớp</b>, <b>' + n + ' học sinh</b> kèm lịch cố định, học phí và các buổi đã điểm danh. Mỗi học sinh được tạo tài khoản (tên viết liền không dấu, mật khẩu <b>123456</b>).</p>' +
-        (Object.keys(S.dupes || {}).length ? '<p class="small">⚠ ' + Object.keys(S.dupes).length + ' tên đăng nhập bị trùng sẽ <b>chưa tạo tài khoản</b> để cô xử lý: ' + Object.keys(S.dupes).map(function (u) { return '<code>' + u + '</code> (' + S.dupes[u].map(function (x) { return esc(x[0]) + ' – ' + esc(x[1]); }).join(', ') + ')'; }).join('; ') + '.</p>' : '') +
-        '<button class="btn btn-lg btn-pink" data-act="lp-seed">Nhập ngay</button></div>';
+  /* ---- Thêm học sinh ---- */
+  function addStuModal(cid) {
+    var cl = classes()[cid];
+    modal('<h2>＋ Thêm học sinh</h2><p class="muted">' + esc(cl.name) + '</p><form id="lp-addst">' + field('st-n', 'Họ tên', '<input class="inp" id="st-n" name="name" required autocomplete="off">') +
+      '<div class="two">' + field('st-u', 'Tên đăng nhập', '<input class="inp" id="st-u" name="user" autocomplete="off" placeholder="tự tạo từ tên">') + field('st-j', 'Bắt đầu học từ', '<input class="inp" type="date" id="st-j" name="joined" value="' + today() + '">') + '</div>' +
+      '<p class="tiny muted" id="st-hint">Mật khẩu: <b>123456</b></p><button class="btn btn-lg btn-pink" type="submit">Thêm vào lớp</button></form>');
+    var f = document.getElementById('lp-addst'), touched = false, hint = document.getElementById('st-hint');
+    function check() { var u = uname(f.user.value || f.name.value), ex = u && LN.users()[u]; hint.innerHTML = ex ? '⚠ <b>' + esc(u) + '</b> đã có (' + esc(ex.name) + ') – đề xuất <b>' + esc(u + (cl.grade < 100 ? cl.grade : '2')) + '</b>' : 'Tài khoản: <b>' + esc(u || '…') + '</b> · mật khẩu <b>123456</b>'; }
+    f.user.addEventListener('input', function () { touched = true; check(); });
+    f.name.addEventListener('input', function () { if (!touched) f.user.value = uname(f.name.value); check(); });
+    f.addEventListener('submit', function (ev) {
+      ev.preventDefault(); var name = f.name.value.trim(), u = uname(f.user.value || name); if (!name) return;
+      var all = LN.users();
+      if (!/^[a-z0-9_]{3,20}$/.test(u)) { toast('Tên đăng nhập cần 3–20 chữ thường không dấu.'); return; }
+      if (all[u]) { toast('“' + u + '” đã có người dùng. Thêm số lớp, vd. ' + u + (cl.grade < 100 ? cl.grade : '2')); return; }
+      var c = classes()[cid], sid = cid + '-' + u;
+      all[u] = { name: name, grade: c.grade, pass: LN.hash(u + ':123456'), mail: '', created: Date.now(), last: 0, status: 'active', byAdmin: true, cls: cid, joined: f.joined.value || today() };
+      store.set('ln_users', all);
+      c.students.push({ id: sid, name: name, user: u, joined: f.joined.value || today() }); saveCls(c);
+      closeModal(); toast('Đã thêm ' + name + ' · ' + u + ' / 123456'); refresh();
+    });
+    setTimeout(function () { f.name.focus(); }, 50);
+  }
+
+  /* ---- Danh sách tài khoản ---- */
+  function accModal(cid) {
+    var list = cid ? [classes()[cid]] : clsList();
+    var txt = '';
+    var h = '<h2>🔑 Tài khoản học sinh</h2><p class="muted">Vào web → <b>Đăng nhập</b>. Mật khẩu chung: <b>123456</b> (các bé tự đổi được).</p>' + list.map(function (cl) {
+      txt += cl.name + '\n';
+      return '<h3 style="margin:14px 0 6px">' + esc(cl.name) + '</h3><table class="tbl acc-t"><tbody>' + cl.students.filter(function (s) { return !s.left; }).map(function (s) {
+        txt += '- ' + s.name + ': ' + (s.user || '(chưa có)') + ' / 123456\n';
+        return '<tr><td>' + esc(s.name) + '</td><td>' + (s.user ? '<code>' + esc(s.user) + '</code>' : '<span style="color:var(--red-dk)">chưa có</span>') + '</td><td><code>123456</code></td></tr>';
+      }).join('') + '</tbody></table>';
+    }).join('') + '<p style="margin-top:14px"><button class="btn btn-pink" data-act="lp-copytxt">📋 Sao chép danh sách</button></p>';
+    var m = modal(h); m.querySelector('[data-act=lp-copytxt]').setAttribute('data-t', txt);
+  }
+
+  /* ---- Học sinh: thông tin, buổi học, học phí, đóng tiền ---- */
+  var DRAWER = null;
+  function stuModal(sid, ym) {
+    var x = stuOf(sid); if (!x) return; var cl = x.cl, st = x.st;
+    ym = ym || K.ymOf(today()); DRAWER = { sid: sid, ym: ym };
+    var R = report(cl, st, ym), u = st.user && LN.users()[st.user], sess = R.sessions;
+    function list(v) { return sess.filter(function (s) { return s.v === v; }).map(function (s) { return dmy(s.date); }).join(', ') || '—'; }
+    var h = '<div class="lp-mh" style="--c:' + esc(cl.color) + '"><span class="lp-dot"></span><div><h2>' + esc(st.name) + '</h2><p>' + esc(cl.name) + (st.left ? ' · <b>đã nghỉ từ ' + dmyy(st.left) + '</b>' : '') + '</p></div></div>' +
+      '<div class="dr-acc">' + (st.user ? '👤 Tài khoản <b>' + esc(st.user) + '</b> · mật khẩu mặc định 123456' + (u ? '' : ' <span style="color:var(--red-dk)">(không tìm thấy)</span>') + ' <button class="lnk" data-act="lp-resetpw">Đặt lại 123456</button>' : '⚠ Chưa có tài khoản <button class="lnk" data-act="lp-mkacc">Tạo tài khoản</button>') + '</div>' +
+      '<div class="dr-mnav"><button class="btn btn-sm" data-act="lp-dym" data-m="' + K.ymAdd(ym, -1) + '">‹</button><b>' + ymTxt(ym) + '</b><button class="btn btn-sm" data-act="lp-dym" data-m="' + K.ymAdd(ym, 1) + '">›</button></div>' +
+      '<div class="dr-att"><div class="p"><b>' + R.count.p + '</b> có mặt<small>' + list(1) + '</small></div><div class="a"><b>' + R.count.a + '</b> vắng<small>' + list(0) + '</small></div><div class="e"><b>' + R.count.e + '</b> có phép<small>' + list(2) + '</small></div></div>' +
+      feeTable(cl, st, R) +
+      '<div class="dr-acts"><button class="btn btn-mint" data-act="lp-payform">＋ Ghi nhận đóng tiền</button><a class="btn" href="#/admin/phieu/' + esc(cl.id) + '/' + ym + '/' + esc(sid) + '">📄 Phiếu báo ' + mTxt(ym) + '</a></div><div id="lp-sub"></div>';
+    var P = payOf(sid).slice().sort(function (a, b) { return a.date < b.date ? 1 : -1; });
+    h += '<h3 class="dr-h">Lịch sử đóng tiền</h3>' + (P.length ? '<div class="dr-pays">' + P.map(function (p) { return '<div><span>' + dmyy(p.date) + '</span><b>' + money(p.amount) + '</b><span class="muted small">' + esc(p.method || '') + (p.note ? ' · ' + esc(p.note) : '') + '</span><button class="lnk" data-act="lp-delpay" data-id="' + esc(p.id) + '" aria-label="Xoá lần đóng này">✕</button></div>'; }).join('') + '</div>' : '<p class="muted small">Chưa có lần đóng tiền nào.</p>');
+    var rows = R.L.rows.slice().reverse();
+    if (rows.length > 1) h += '<h3 class="dr-h">Các kỳ học phí</h3><table class="tbl dr-hist"><thead><tr><th>Kỳ</th><th>Phải đóng</th><th>Đã đóng</th><th>Còn</th></tr></thead><tbody>' + rows.map(function (r) { return '<tr><td>' + esc(r.label) + '</td><td>' + money(r.amount) + '</td><td>' + money(r.paid) + '</td><td>' + (r.rem > 0 ? '<b class="neg">' + money(r.rem) + '</b>' : '✓') + '</td></tr>'; }).join('') + '</tbody></table>';
+    h += '<details class="lp-more"><summary>Sửa thông tin học sinh…</summary><form id="lp-editst" class="lp-sub">' +
+      '<div class="two">' + field('es-n', 'Họ tên', '<input class="inp" id="es-n" name="name" value="' + esc(st.name) + '">') + field('es-p', 'Học phí riêng/buổi (trống = giá lớp)', '<input class="inp" type="number" step="5000" id="es-p" name="price" value="' + (st.price || '') + '" placeholder="' + K.priceOf(cl, null, today()) + '">') + '</div>' +
+      '<button class="btn btn-sm btn-pink" type="submit">Lưu</button> ' + (st.left ? '<button class="btn btn-sm" type="button" data-act="lp-back">↩ Học lại</button>' : '<button class="btn btn-sm" type="button" data-act="lp-leave">Cho nghỉ học từ hôm nay</button>') + '</form></details>';
+    modal(h, 'wide');
+    var fe = document.getElementById('lp-editst');
+    fe.addEventListener('submit', function (ev) {
+      ev.preventDefault(); var c = classes()[cl.id];
+      c.students.forEach(function (s) { if (s.id === sid) { s.name = fe.name.value.trim() || s.name; if (+fe.price.value) s.price = +fe.price.value; else delete s.price; } });
+      saveCls(c); toast('Đã lưu'); refresh(); stuModal(sid, ym);
+    });
+  }
+  function feeTable(cl, st, R) {
+    var pack = (cl.billing || {}).mode === 'pack', rows = '';
+    R.cur.forEach(function (r) { rows += '<tr><td>' + (pack ? esc(r.label) + ' · ' + r.size + ' × ' + money(r.price) : 'Học phí ' + mTxt(R.ym) + ' · ' + r.n + ' buổi × ' + money(r.price)) + '</td><td>' + money(r.amount) + '</td></tr>'; });
+    if (!R.cur.length) rows += '<tr><td>Học phí ' + mTxt(R.ym) + (pack ? ' · chưa đủ gói' : ' · 0 buổi') + '</td><td>0đ</td></tr>';
+    if (R.feePaid) rows += '<tr><td>Đã đóng cho ' + (pack ? 'gói này' : mTxt(R.ym)) + '</td><td>−' + money(R.feePaid) + '</td></tr>';
+    R.old.forEach(function (r) { rows += '<tr class="old"><td>Còn nợ ' + esc(r.label.toLowerCase()) + ' (cộng dồn)</td><td>+' + money(r.rem) + '</td></tr>'; });
+    return '<table class="fee-t"><tbody>' + rows + '</tbody><tfoot><tr><td>Còn phải đóng' + (R.due && R.total > 0 ? '<small>Hạn ' + dmyy(R.due) + '</small>' : '') + '</td><td>' + (R.total > 0 ? money(R.total) : '<span class="ok">Đã đủ ✓</span>') + '</td></tr></tfoot></table>' +
+      (R.credit ? '<p class="small" style="color:var(--mint-dk)">Đóng dư ' + money(R.credit) + ' – tự trừ vào tháng sau.</p>' : '') +
+      (R.progress ? '<p class="small muted">📦 Gói đang học: ' + R.progress.done + '/' + R.progress.size + ' buổi</p>' : '');
+  }
+  function payForm(sid, amt) {
+    var sub = document.getElementById('lp-sub'); if (!sub) return;
+    sub.innerHTML = '<form id="lp-payf" class="lp-sub"><div class="two">' + field('pf-a', 'Số tiền thực nhận', '<input class="inp" type="number" step="1000" min="1000" id="pf-a" name="amount" value="' + (amt > 0 ? amt : '') + '" required>') + field('pf-d', 'Ngày nhận', '<input class="inp" type="date" id="pf-d" name="date" value="' + today() + '">') + '</div>' +
+      '<div class="two">' + field('pf-m', 'Hình thức', '<select class="sel" id="pf-m" name="method"><option>Chuyển khoản</option><option>Tiền mặt</option></select>') + field('pf-n', 'Ghi chú', '<input class="inp" id="pf-n" name="note" placeholder="vd. hẹn đóng nốt tuần sau">') + '</div>' +
+      '<p class="tiny muted">Đóng thiếu cứ ghi đúng số đã nhận – phần còn lại tự cộng vào tháng sau. Tiền trừ vào kỳ cũ nhất trước.</p><button class="btn btn-pink" type="submit">Lưu</button></form>';
+    var f = document.getElementById('lp-payf'); f.amount.focus();
+    f.addEventListener('submit', function (ev) {
+      ev.preventDefault(); var a = +f.amount.value; if (!(a > 0)) return;
+      var P = pays(); P[sid] = P[sid] || []; P[sid].push({ id: 'p' + Date.now().toString(36), date: f.date.value || today(), amount: a, method: f.method.value, note: f.note.value.trim(), at: Date.now() });
+      store.set('ln_pay', P); toast('Đã ghi nhận ' + money(a)); refresh(); stuModal(sid, DRAWER && DRAWER.ym);
+    });
+  }
+
+  /* ================= Trang chủ: Lớp học ================= */
+  function viewHome() {
+    if (ensureSeed() === 'wait') { shell('lop', '<div class="card"><p class="muted">Đang tải dữ liệu lớp học…</p></div>'); return; }
+    var td = today(), ym = K.ymOf(td), cls = clsList(), sv = store.get('ln_seed_v', null), todays = [];
+    var body = '<div class="ad-h"><div><h1>Lớp học</h1><p class="muted">' + DOWS[K.dow(td)] + ', ' + dmyy(td) + '</p></div><button class="btn btn-sm" data-act="lp-acc">🔑 Tài khoản học sinh</button></div>';
+    if (sv && sv.rep && !sv.seen) {
+      var rp = sv.rep;
+      body += '<div class="card lp-rep"><h2>✅ Đã nhập dữ liệu từ file điểm danh</h2><p>Tạo mới <b>' + rp.made.length + '</b> tài khoản' + (rp.linked.length ? ', giữ nguyên <b>' + rp.linked.length + '</b> tài khoản đã có' : '') + '. Mật khẩu chung <b>123456</b>.</p>' +
+        (rp.renamed.length ? '<p class="small">Bạn trùng tên được đặt theo lớp: ' + rp.renamed.map(function (r) { return esc(r[0]) + ' (' + esc(r[1]) + ') → <code>' + esc(r[2]) + '</code>'; }).join(' · ') + '</p>' : '') +
+        (rp.clash.length ? '<p class="small" style="color:var(--red-dk)">⚠ Chưa tạo được (tên đã thuộc người khác): ' + rp.clash.map(function (r) { return esc(r.name) + ' (' + esc(r.cls) + ') – ' + esc(r.user); }).join(', ') + '</p>' : '') +
+        '<p style="margin-top:10px"><button class="btn btn-sm btn-pink" data-act="lp-acc">Xem danh sách tài khoản</button> <button class="btn btn-sm" data-act="lp-seen">Đã xem</button></p></div>';
     }
-    if (rep && rep.at && Date.now() - rep.at < 7 * 86400000 && !seedPending()) body += seedReport(rep);
-    body += '<div class="lp-cards">' + cls.map(function (cl) {
-      var tot = { b: 0, p: 0 }; (cl.students || []).forEach(function (st) { var L = ledgerOf(cl, st); L.rows.forEach(function (r) { if (r.id === ym || (r.kind === 'pack' && K.ymOf(r.due) === ym)) { tot.b += r.amount; tot.p += r.paid; } }); });
-      return '<a class="lp-card" href="#/admin/lop/' + esc(cl.id) + '" style="--c:' + esc(cl.color) + '"><div class="lp-ch"><b>' + esc(cl.name) + '</b><span class="tag">' + (cl.students || []).filter(function (s) { return !s.left; }).length + ' học sinh</span></div>' +
-        '<p class="lp-cs">🗓 ' + esc(schedTxt(cl)) + '</p><p class="lp-cs">💰 ' + esc(billTxt(cl)) + '</p>' +
-        '<div class="lp-cm"><span>' + ymTxt(ym) + '</span><span>Đã thu <b>' + money(tot.p) + '</b> / ' + money(tot.b) + '</span></div></a>';
-    }).join('') + '</div>';
+    var rows = cls.map(function (cl) {
+      var cd = cdata(cl.id), ms = K.monthSessions(cl, cd, ym), sts = curStudents(cl, ym), miss = 0, fee = 0, paid = 0, owe = 0;
+      ms.forEach(function (s) {
+        if (s.date === td) todays.push({ cl: cl, s: s, cd: cd });
+        if (s.off || !sessDone(s)) return; var r = cd.att[s.key] || {};
+        if (sts.some(function (st) { return K.activeOn(st, s.date) && r[st.id] == null; })) miss++;
+      });
+      sts.forEach(function (st) { var R = report(cl, st, ym); fee += R.fee; paid += R.feePaid; if (R.total > 0) owe++; });
+      return '<a class="cl-row" href="#/admin/lop/' + esc(cl.id) + '" style="--c:' + esc(cl.color) + '"><span class="cl-bar"></span><div class="cl-main"><b>' + esc(cl.name) + '</b><span>' + esc(schedTxt(cl)) + '</span></div>' +
+        '<div class="cl-side"><span>' + sts.filter(function (s) { return !s.left; }).length + ' HS</span>' + (miss ? '<span class="warn">⚠ ' + miss + ' buổi chưa điểm danh</span>' : '') + '<span class="small muted">Thu ' + mTxt(ym) + ': ' + money(paid) + ' / ' + money(fee) + '</span></div><span class="cl-go">›</span></a>';
+    }).join('');
+    body += '<h2 class="ad-sh">Buổi học hôm nay</h2>' + (todays.length ? '<div class="td-list">' + todays.sort(function (a, b) { return K.hm(a.s.start) - K.hm(b.s.start); }).map(function (it) {
+      var sts = it.cl.students.filter(function (st) { return K.activeOn(st, it.s.date); }), r = it.cd.att[it.s.key] || {}, mk = sts.filter(function (st) { return r[st.id] != null; }).length, pr = sts.filter(function (st) { return r[st.id] === 1; }).length;
+      return '<button type="button" class="td-b' + (it.s.off ? ' off' : '') + '" style="--c:' + esc(it.cl.color) + '" data-act="lp-sess" data-c="' + esc(it.cl.id) + '" data-k="' + esc(it.s.key) + '"><b>' + K.timeTxt(it.s.start) + '</b><span>' + esc(it.cl.name) + '</span><small>' + (it.s.off ? 'Lớp nghỉ' : mk >= sts.length && sts.length ? '✅ ' + pr + '/' + sts.length + ' có mặt' : 'Bấm để điểm danh') + '</small></button>';
+    }).join('') + '</div>' : '<p class="muted">Hôm nay không có buổi học nào.</p>');
+    body += '<h2 class="ad-sh">Các lớp</h2><div class="cl-list">' + (rows || '<p class="muted">Chưa có lớp nào.</p>') + '</div><p style="margin-top:14px"><button class="btn btn-sm" data-act="lp-newcls">＋ Thêm lớp mới</button></p>';
     var arch = clsList(true).filter(function (c) { return c.archived; });
-    if (arch.length) body += '<details style="margin-top:16px"><summary class="muted">Lớp đã lưu trữ (' + arch.length + ')</summary>' + arch.map(function (c) { return '<p><a href="#/admin/lop/' + esc(c.id) + '">' + esc(c.name) + '</a></p>'; }).join('') + '</details>';
+    if (arch.length) body += '<details style="margin-top:12px"><summary class="muted small">Lớp đã lưu trữ (' + arch.length + ')</summary>' + arch.map(function (c) { return '<p><a href="#/admin/lop/' + esc(c.id) + '">' + esc(c.name) + '</a></p>'; }).join('') + '</details>';
     shell('lop', body);
   }
 
-  /* ---- Chi tiết lớp: bảng điểm danh tháng, học sinh, cài đặt ---- */
-  var CTAB = {};
-  function viewClass(cid, ym, tab) {
-    var cl = classes()[cid]; if (!cl) { LN.go('#/admin/lop'); return; }
-    ym = /^\d{4}-\d{2}$/.test(ym || '') ? ym : K.ymOf(today()); tab = tab || CTAB[cid] || 'grid'; CTAB[cid] = tab;
-    var cd = cdata(cid), td = today(), ss = K.monthSessions(cl, cd, ym), closed = cd.closed[ym], sts = (cl.students || []).filter(function (st) { return !st.left || st.left >= ym + '-01'; });
-    var head = '<a href="#/admin/lop" class="backlink">← Tất cả lớp</a><div class="lp-hero" style="--c:' + esc(cl.color) + ';--t:' + txtColor(cl.color) + '"><div><h1>' + esc(cl.name) + '</h1><p>🗓 ' + esc(schedTxt(cl)) + '</p><p>💰 ' + esc(billTxt(cl)) + (cl.billing && cl.billing.mode !== 'pack' ? ' · hạn đóng ngày ' + (cl.billing.dueDay || 5) + ' tháng sau' : ' · hạn ' + ((cl.billing || {}).grace || 0) + ' ngày sau buổi cuối của gói') + '</p></div></div>' +
-      '<nav class="seg lp-tabs">' + [['grid', 'Điểm danh & học phí'], ['hs', 'Học sinh (' + sts.length + ')'], ['set', 'Lịch & cài đặt']].map(function (t) { return '<button type="button" class="' + (tab === t[0] ? 'on' : '') + '" data-act="lp-ctab" data-c="' + esc(cid) + '" data-t="' + t[0] + '">' + t[1] + '</button>'; }).join('') + '</nav>';
-    var body = '';
-    if (tab === 'grid') {
-      var tot = { n: 0, amt: 0, paid: 0, rem: 0 };
-      body = '<div class="card"><div class="chead"><div class="lp-mnav"><a class="btn btn-sm" href="#/admin/lop/' + esc(cid) + '/' + K.ymAdd(ym, -1) + '">‹</a><h2>' + ymTxt(ym) + '</h2><a class="btn btn-sm" href="#/admin/lop/' + esc(cid) + '/' + K.ymAdd(ym, 1) + '">›</a></div>' +
-        '<div class="lp-acts">' + (closed ? '<span class="tag tag-mint">🔒 Đã chốt ' + dmyy(K.iso(new Date(closed.at))) + '</span><button class="btn btn-sm" data-act="lp-unclose" data-c="' + esc(cid) + '" data-m="' + ym + '">Mở chốt</button>' : '<button class="btn btn-sm btn-yel" data-act="lp-close-month" data-c="' + esc(cid) + '" data-m="' + ym + '" title="Lưu cố định số buổi & tiền của tháng để báo cáo">🔒 Chốt học phí tháng</button>') +
-        '<button class="btn btn-sm" data-act="lp-extra" data-c="' + esc(cid) + '">＋ Buổi học bù</button></div></div>' +
-        (ss.length ? '<div class="tblw lp-gridw"><table class="tbl lp-grid"><thead><tr><th class="lp-sn">Học sinh</th>' + ss.map(function (s) { return '<th class="center' + (s.off ? ' off' : '') + (s.date === td ? ' td' : '') + '"><button type="button" class="lp-hb" data-act="lp-sess" data-c="' + esc(cid) + '" data-k="' + esc(s.key) + '">' + DOWS_S[K.dow(s.date)] + '<br><b>' + dmy(s.date) + '</b>' + (s.extra ? '<br><i>bù</i>' : '') + (s.off ? '<br><i>nghỉ</i>' : '') + '</button></th>'; }).join('') +
-          '<th>Buổi</th><th>Học phí</th><th>Đã đóng</th><th>Còn</th></tr></thead><tbody>' + sts.map(function (st) {
-            var n = 0, L = ledgerOf(cl, st, ym), r = L.rows.filter(function (x) { return x.id === ym; })[0];
-            var cells = ss.map(function (s) {
-              if (!K.activeOn(st, s.date)) return '<td class="center na">·</td>';
-              if (s.off) return '<td class="center off">–</td>';
-              var v = K.mark(cd, s.key, st.id); if (v === 1) n++;
-              return '<td class="center"><button type="button" class="lp-c v' + (v == null ? 'n' : v) + '" data-act="lp-cell" data-c="' + esc(cid) + '" data-k="' + esc(s.key) + '" data-s="' + esc(st.id) + '"' + (closed ? ' disabled' : '') + ' aria-label="' + esc(st.name) + ' ' + dmy(s.date) + '">' + (v === 1 ? '1' : v === 0 ? '0' : v === 2 ? 'P' : '') + '</button></td>';
-            }).join('');
-            var amt = cl.billing && cl.billing.mode === 'pack' ? n * K.priceOf(cl, st) : (r ? r.amount : 0), paid = r ? r.paid : 0, rem = r ? r.rem : 0;
-            if (cl.billing && cl.billing.mode === 'pack') { paid = null; rem = L.debt; }
-            tot.n += n; tot.amt += amt; tot.paid += paid || 0; tot.rem += rem;
-            return '<tr><th class="lp-sn"><a href="#/admin/hs/' + esc(st.id) + '">' + esc(st.name) + '</a>' + (st.user ? '' : ' <span class="tag tag-yel" title="Chưa có tài khoản">!</span>') + '</th>' + cells + '<td class="center"><b>' + n + '</b></td><td>' + money(amt) + '</td><td>' + (paid == null ? '<span class="tiny muted">theo gói</span>' : money(paid)) + '</td><td>' + (rem > 0 ? '<b style="color:var(--red-dk)">' + money(rem) + '</b>' : '<span style="color:var(--mint-dk)">✓</span>') + '</td></tr>';
-          }).join('') + '</tbody><tfoot><tr><th class="lp-sn">Tổng</th><td colspan="' + ss.length + '"></td><td class="center"><b>' + tot.n + '</b></td><td><b>' + money(tot.amt) + '</b></td><td><b>' + money(tot.paid) + '</b></td><td><b>' + money(tot.rem) + '</b></td></tr></tfoot></table></div>' +
-          '<p class="tiny muted" style="margin-top:8px">Bấm ô để đổi: trống → <b>1</b> có mặt → <b>0</b> vắng → <b>P</b> vắng có phép → trống. Bấm tiêu đề ngày để điểm danh cả buổi, cho lớp nghỉ hoặc dời buổi. ' + (cl.billing && cl.billing.mode === 'pack' ? 'Lớp đóng theo gói: cột “Còn” là tổng nợ các gói đã học xong.' : '') + '</p>'
-          : '<p class="muted">Tháng này không có buổi học nào theo lịch.</p>') + '</div>';
-    } else if (tab === 'hs') {
-      body = '<div class="card"><div class="chead"><h2>Học sinh</h2></div>' + (cl.students || []).map(function (st) {
-        var L = ledgerOf(cl, st);
-        return '<div class="lp-srow' + (st.left ? ' left' : '') + '"><a href="#/admin/hs/' + esc(st.id) + '"><b>' + esc(st.name) + '</b></a><span class="small muted">' + (st.user ? '👤 ' + esc(st.user) : '<span style="color:var(--red-dk)">chưa có tài khoản</span>') + (st.price ? ' · giá riêng ' + money(st.price) : '') + (st.left ? ' · nghỉ từ ' + dmyy(st.left) : '') + '</span><span>' + (L.debt ? '<b style="color:var(--red-dk)">nợ ' + money(L.debt) + '</b>' : '<span style="color:var(--mint-dk)">✓ không nợ</span>') + '</span></div>';
-      }).join('') +
-        '<form id="lp-addst" class="lp-addst"><h3>Thêm học sinh vào lớp</h3><div class="two"><div class="field"><label for="lp-sname">Họ tên</label><input class="inp" id="lp-sname" name="name" required></div><div class="field"><label for="lp-suser">Tên đăng nhập</label><input class="inp" id="lp-suser" name="user" placeholder="tự tạo từ tên"></div></div>' +
-        '<div class="two"><div class="field"><label for="lp-sjoin">Bắt đầu học từ</label><input class="inp" type="date" id="lp-sjoin" name="joined" value="' + td + '"></div><div class="field"><label for="lp-sprice">Học phí riêng (để trống = giá lớp)</label><input class="inp" type="number" id="lp-sprice" name="price" step="5000" placeholder="' + cl.price + '"></div></div>' +
-        '<label class="chk"><input type="checkbox" name="acc" checked><span>Tạo tài khoản học app (mật khẩu 123456)</span></label><button class="btn btn-pink" type="submit">Thêm học sinh</button></form></div>';
-    } else {
-      var b = cl.billing || {};
-      body = '<div class="card"><h2>Lịch học cố định</h2><p class="small muted">Đổi lịch chỉ áp dụng từ ngày cô chọn – các buổi và học phí trước ngày đó giữ nguyên.</p>' +
-        '<form id="lp-sched"><div id="lp-slots">' + (cl.slots || []).filter(function (s) { return !s.to || s.to >= td; }).map(slotRow).join('') + '</div><button type="button" class="btn btn-sm" data-act="lp-addslot">＋ Thêm buổi trong tuần</button>' +
-        '<div class="two" style="margin-top:12px;align-items:end"><div class="field"><label for="lp-from">Áp dụng từ ngày</label><input class="inp" type="date" id="lp-from" name="from" value="' + td + '"></div><div><button class="btn btn-pink" type="submit">Lưu lịch mới</button></div></div></form>' +
-        ((cl.slots || []).some(function (s) { return s.to && s.to < td; }) ? '<details class="small" style="margin-top:8px"><summary>Lịch cũ</summary>' + cl.slots.filter(function (s) { return s.to && s.to < td; }).map(function (s) { return '<p>' + DOWS[s.dow] + ' ' + K.timeTxt(s.start) + '–' + K.timeTxt(s.end) + ' · từ ' + (s.from ? dmyy(s.from) : 'đầu') + ' đến ' + dmyy(s.to) + '</p>'; }).join('') + '</details>' : '') + '</div>' +
-        '<div class="card" style="margin-top:16px"><h2>Thông tin & học phí</h2><form id="lp-info"><div class="two"><div class="field"><label for="lp-name">Tên lớp</label><input class="inp" id="lp-name" name="name" value="' + esc(cl.name) + '"></div><div class="field"><label for="lp-color">Màu trên lịch</label><input class="inp" type="color" id="lp-color" name="color" value="' + esc(cl.color || '#FF5C9A') + '"></div></div>' +
-        '<div class="two"><div class="field"><label for="lp-grade">Lớp/khoá học trên app</label><select class="sel" id="lp-grade" name="grade">' + LN.gradeOpts(cl.grade) + '</select></div><div class="field"><label for="lp-price">Học phí mỗi buổi (đ)</label><input class="inp" type="number" step="5000" id="lp-price" name="price" value="' + (cl.price || 0) + '"></div></div>' +
-        '<div class="two"><div class="field"><label for="lp-mode">Cách thu</label><select class="sel" id="lp-mode" name="mode"><option value="month"' + (b.mode !== 'pack' ? ' selected' : '') + '>Theo tháng (số buổi đi học × giá)</option><option value="pack"' + (b.mode === 'pack' ? ' selected' : '') + '>Theo gói N buổi</option></select></div>' +
-        '<div class="field"><label for="lp-size">Số buổi mỗi gói</label><input class="inp" type="number" min="1" id="lp-size" name="size" value="' + (b.size || 5) + '"></div></div>' +
-        '<div class="two"><div class="field"><label for="lp-due">Hạn đóng (theo tháng): ngày … tháng sau</label><input class="inp" type="number" min="1" max="28" id="lp-due" name="dueDay" value="' + (b.dueDay || 5) + '"></div><div class="field"><label for="lp-grace">Hạn đóng (theo gói): số ngày sau buổi cuối</label><input class="inp" type="number" min="0" id="lp-grace" name="grace" value="' + (b.grace || 0) + '"></div></div>' +
-        '<button class="btn btn-pink" type="submit">Lưu</button> <button class="btn" type="button" data-act="lp-archive" data-c="' + esc(cid) + '">' + (cl.archived ? 'Bỏ lưu trữ' : 'Lưu trữ lớp (ẩn khỏi lịch)') + '</button></form>' +
-        '<p class="tiny muted" style="margin-top:8px">Đổi giá chỉ ảnh hưởng các tháng chưa chốt. Chốt học phí từng tháng để giữ nguyên số liệu đã báo cáo.</p></div>';
-    }
-    shell('lop', head + body);
-    bindClass(cl, ym);
+  /* ================= Bảng tính của một lớp ================= */
+  function viewClass(cid, ym) {
+    if (ensureSeed() === 'wait') { shell('lop', '<div class="card"><p class="muted">Đang tải dữ liệu lớp học…</p></div>'); return; }
+    var cl = classes()[cid]; if (!cl) { LN.go('#/admin'); return; }
+    if (ym === 'set') return viewClassSet(cl);
+    ym = /^\d{4}-\d{2}$/.test(ym || '') ? ym : K.ymOf(today());
+    var cd = cdata(cid), td = today(), ss = K.monthSessions(cl, cd, ym), sts = curStudents(cl, ym), pack = (cl.billing || {}).mode === 'pack';
+    var head = '<a href="#/admin" class="backlink">← Các lớp</a><div class="sh-hero" style="--c:' + esc(cl.color) + '"><div><h1>' + esc(cl.name) + '</h1><p>🗓 ' + esc(schedTxt(cl)) + '</p><p>💰 ' + esc(ruleTxt(cl)) + '</p></div><a class="btn btn-sm" href="#/admin/lop/' + esc(cid) + '/set">⚙ Lịch & học phí</a></div>';
+    var bar = '<div class="sh-bar"><div class="sh-mnav"><a class="btn btn-sm" href="#/admin/lop/' + esc(cid) + '/' + K.ymAdd(ym, -1) + '" aria-label="Tháng trước">‹</a><h2>' + ymTxt(ym) + '</h2><a class="btn btn-sm" href="#/admin/lop/' + esc(cid) + '/' + K.ymAdd(ym, 1) + '" aria-label="Tháng sau">›</a></div>' +
+      '<div class="sh-tools"><button class="btn btn-sm" data-act="lp-addsess" data-c="' + esc(cid) + '">＋ Thêm buổi</button><button class="btn btn-sm" data-act="lp-addst" data-c="' + esc(cid) + '">＋ Học sinh</button><a class="btn btn-sm btn-pink" href="#/admin/phieu/' + esc(cid) + '/' + ym + '">📄 Phiếu báo ' + mTxt(ym) + '</a></div></div>';
+    var T = { n: 0, fee: 0, old: 0, paid: 0, tot: 0 };
+    var table = !sts.length ? '<p class="muted">Chưa có học sinh. Bấm “＋ Học sinh”.</p>' : '<div class="sh-wrap"><table class="sh"><thead><tr><th class="nm">Học sinh</th>' + ss.map(function (s) {
+      return '<th class="d' + (s.off ? ' off' : '') + (s.date === td ? ' td' : '') + (s.extra ? ' ex' : '') + '"><button type="button" data-act="lp-sess" data-c="' + esc(cid) + '" data-k="' + esc(s.key) + '" title="Điểm danh cả buổi / đổi buổi">' + DOWS_S[K.dow(s.date)] + '<b>' + dmy(s.date) + '</b>' + (s.off ? '<i>nghỉ</i>' : s.extra ? '<i>thêm</i>' : '') + '</button></th>';
+    }).join('') + '<th class="sm">Buổi</th><th class="sm">' + (pack ? 'Gói đến hạn' : 'Học phí') + '</th><th class="sm">Nợ trước</th><th class="sm">Đã đóng</th><th class="sm tot">Còn phải đóng</th></tr></thead><tbody>' +
+      sts.map(function (st) {
+        var R = report(cl, st, ym);
+        var cells = ss.map(function (s) {
+          if (!K.activeOn(st, s.date)) return '<td class="na"></td>';
+          if (s.off) return '<td class="off"></td>';
+          var v = K.mark(cd, s.key, st.id);
+          return '<td><button type="button" class="lp-c v' + (v == null ? 'n' : v) + (v == null && sessDone(s) ? ' miss' : '') + '" data-act="lp-cell" data-c="' + esc(cid) + '" data-k="' + esc(s.key) + '" data-s="' + esc(st.id) + '" aria-label="' + esc(st.name) + ' ' + dmy(s.date) + '">' + (v === 1 ? '1' : v === 0 ? '0' : v === 2 ? 'P' : '') + '</button></td>';
+        }).join('');
+        T.n += R.count.p; T.fee += R.fee; T.old += R.oldRem; T.paid += R.feePaid; T.tot += R.total;
+        return '<tr><th class="nm"><button type="button" class="nm-b" data-act="lp-stu" data-s="' + esc(st.id) + '" data-m="' + ym + '">' + esc(st.name) + (st.user ? '' : ' <span class="tag tag-yel">!</span>') + '</button></th>' + cells +
+          '<td class="sm"><b>' + R.count.p + '</b></td><td class="sm">' + money(R.fee) + '</td><td class="sm">' + (R.oldRem ? '<span class="neg">' + money(R.oldRem) + '</span>' : '–') + '</td><td class="sm">' + (R.feePaid ? money(R.feePaid) : '–') + '</td><td class="sm tot">' + (R.total > 0 ? '<b class="neg">' + money(R.total) + '</b>' : '<span class="ok">✓</span>') + '</td></tr>';
+      }).join('') + '</tbody><tfoot><tr><th class="nm">Tổng</th>' + ss.map(function () { return '<td></td>'; }).join('') + '<td class="sm"><b>' + T.n + '</b></td><td class="sm"><b>' + money(T.fee) + '</b></td><td class="sm">' + money(T.old) + '</td><td class="sm">' + money(T.paid) + '</td><td class="sm tot"><b>' + money(T.tot) + '</b></td></tr></tfoot></table></div>' +
+      '<p class="sh-legend"><span class="lp-c v1">1</span> có mặt (tính tiền) <span class="lp-c v0">0</span> vắng <span class="lp-c v2">P</span> có phép <span class="lp-c vn miss"></span> chưa điểm danh · Bấm ô để đổi, bấm <b>ngày</b> để điểm danh cả buổi, bấm <b>tên</b> để xem chi tiết & thu tiền.</p>';
+    if (!ss.length && sts.length) table = '<p class="muted">' + ymTxt(ym) + ' chưa có buổi học nào theo lịch.</p>' + table;
+    shell('lop', head + '<div class="card sh-card">' + bar + table + '</div>');
   }
+
+  /* ---- Cài đặt lớp: lịch cố định, học phí, học sinh ---- */
   function slotRow(s) {
     s = s || { dow: 1, start: '17:00', end: '18:30' };
-    return '<div class="lp-slot"><select class="sel" name="dow">' + [1, 2, 3, 4, 5, 6, 0].map(function (d) { return '<option value="' + d + '"' + (+s.dow === d ? ' selected' : '') + '>' + DOWS[d] + '</option>'; }).join('') + '</select><input class="inp" type="time" name="start" value="' + esc(s.start) + '"><span>→</span><input class="inp" type="time" name="end" value="' + esc(s.end) + '"><button type="button" class="btn btn-sm" data-act="lp-delslot" aria-label="Xoá">✕</button></div>';
+    return '<div class="lp-slot"><select class="sel" name="dow" aria-label="Thứ">' + [1, 2, 3, 4, 5, 6, 0].map(function (d) { return '<option value="' + d + '"' + (+s.dow === d ? ' selected' : '') + '>' + DOWS[d] + '</option>'; }).join('') + '</select><input class="inp" type="time" name="start" value="' + esc(s.start) + '" aria-label="Bắt đầu"><span>→</span><input class="inp" type="time" name="end" value="' + esc(s.end) + '" aria-label="Kết thúc"><button type="button" class="btn btn-sm" data-act="lp-delslot" aria-label="Xoá">✕</button></div>';
   }
-  function bindClass(cl, ym) {
+  function viewClassSet(cl) {
+    var td = today(), b = cl.billing || {}, m1 = K.ymOf(td) + '-01', price = K.priceOf(cl, null, td);
+    var body = '<a href="#/admin/lop/' + esc(cl.id) + '" class="backlink">← Bảng ' + esc(cl.name) + '</a><h1>' + esc(cl.name) + ' · Lịch & học phí</h1>' +
+      '<div class="card"><h2>🗓 Lịch học cố định</h2><p class="small muted">Lịch các tháng sau tự điền theo lịch này. Đổi lịch chỉ áp dụng từ ngày cô chọn – các tháng trước giữ nguyên.</p>' +
+      '<form id="lp-sched"><div id="lp-slots">' + (cl.slots || []).filter(function (s) { return !s.to || s.to >= td; }).map(slotRow).join('') + '</div><button type="button" class="btn btn-sm" data-act="lp-addslot">＋ Thêm buổi trong tuần</button>' +
+      '<div class="two" style="margin-top:12px;align-items:end">' + field('sc-f', 'Áp dụng từ ngày', '<input class="inp" type="date" id="sc-f" name="from" value="' + td + '">') + '<div><button class="btn btn-pink" type="submit">Lưu lịch</button></div></div></form></div>' +
+      '<div class="card"><h2>💰 Học phí</h2><form id="lp-fee"><div class="two">' + field('fe-p', 'Học phí mỗi buổi (đ)', '<input class="inp" type="number" step="5000" id="fe-p" name="price" value="' + price + '">') + field('fe-f', 'Giá mới áp dụng từ', '<input class="inp" type="date" id="fe-f" name="from" value="' + m1 + '">') + '</div>' +
+      '<div class="two">' + field('fe-m', 'Cách thu', '<select class="sel" id="fe-m" name="mode"><option value="month"' + (b.mode !== 'pack' ? ' selected' : '') + '>Theo tháng: số buổi đi học × giá</option><option value="pack"' + (b.mode === 'pack' ? ' selected' : '') + '>Theo gói nhiều buổi</option></select>') +
+      field('fe-d', 'Hạn đóng (theo tháng): ngày … tháng sau', '<input class="inp" type="number" min="1" max="28" id="fe-d" name="dueDay" value="' + (b.dueDay || 5) + '">') + '</div>' +
+      '<div class="two pk"' + (b.mode === 'pack' ? '' : ' hidden') + '>' + field('fe-s', 'Số buổi mỗi gói', '<input class="inp" type="number" min="1" id="fe-s" name="size" value="' + (b.size || 5) + '">') + field('fe-w', 'Thu tiền gói', '<select class="sel" id="fe-w" name="when"><option value="after"' + (b.when !== 'before' ? ' selected' : '') + '>Sau khi học xong gói</option><option value="before"' + (b.when === 'before' ? ' selected' : '') + '>Ngay buổi đầu của gói</option></select>') + field('fe-g', 'Hạn: số ngày sau đó', '<input class="inp" type="number" min="0" id="fe-g" name="grace" value="' + (b.grace || 0) + '">') + '</div>' +
+      '<button class="btn btn-pink" type="submit">Lưu học phí</button></form>' +
+      ((cl.prices || []).length ? '<p class="tiny muted" style="margin-top:8px">Lịch sử giá: ' + money(cl.price) + ' ban đầu' + cl.prices.map(function (p) { return ' → ' + money(p.price) + ' từ ' + dmyy(p.from); }).join('') + '</p>' : '') + '</div>' +
+      '<div class="card"><h2>👧 Học sinh</h2>' + (cl.students || []).map(function (st) { return '<div class="lp-srow' + (st.left ? ' left' : '') + '"><button class="nm-b" data-act="lp-stu" data-s="' + esc(st.id) + '">' + esc(st.name) + '</button><span class="small muted">' + (st.user ? esc(st.user) : 'chưa có tài khoản') + (st.price ? ' · giá riêng ' + money(st.price) : '') + (st.left ? ' · đã nghỉ ' + dmyy(st.left) : '') + '</span></div>'; }).join('') +
+      '<p style="margin-top:10px"><button class="btn btn-sm" data-act="lp-addst" data-c="' + esc(cl.id) + '">＋ Thêm học sinh</button></p></div>' +
+      '<div class="card"><h2>Khác</h2><form id="lp-info"><div class="two">' + field('in-n', 'Tên lớp', '<input class="inp" id="in-n" name="name" value="' + esc(cl.name) + '">') + field('in-c', 'Màu', '<input class="inp" type="color" id="in-c" name="color" value="' + esc(cl.color || '#FF5C9A') + '">') + field('in-g', 'Bài học trên app', '<select class="sel" id="in-g" name="grade">' + LN.gradeOpts(cl.grade) + '</select>') + '</div>' +
+      '<button class="btn btn-pink" type="submit">Lưu</button> <button class="btn" type="button" data-act="lp-archive" data-c="' + esc(cl.id) + '">' + (cl.archived ? 'Bỏ lưu trữ' : 'Lưu trữ lớp (ẩn đi)') + '</button></form></div>';
+    shell('lop', body);
     var f1 = document.getElementById('lp-sched');
-    if (f1) f1.addEventListener('submit', function (ev) {
-      ev.preventDefault(); var from = document.getElementById('lp-from').value || today(), rows = [].slice.call(f1.querySelectorAll('.lp-slot'));
-      var ns = rows.map(function (r) { return { dow: +r.querySelector('[name=dow]').value, start: r.querySelector('[name=start]').value, end: r.querySelector('[name=end]').value, from: from, to: null }; }).filter(function (s) { return s.start; });
-      var c = classes()[cl.id], prevDay = K.addDays(from, -1);
-      c.slots = (c.slots || []).filter(function (s) { return !(s.from && s.from >= from); }).map(function (s) { if (!s.to || s.to >= from) s.to = prevDay; return s; }).filter(function (s) { return !s.from || s.from <= s.to; }).concat(ns);
-      saveCls(c); toast('Đã lưu lịch mới, áp dụng từ ' + dmyy(from)); viewClass(cl.id, ym, 'set');
+    f1.addEventListener('submit', function (ev) {
+      ev.preventDefault(); var from = f1.from.value || today();
+      var ns = [].slice.call(f1.querySelectorAll('.lp-slot')).map(function (r) { return { dow: +r.querySelector('[name=dow]').value, start: r.querySelector('[name=start]').value, end: r.querySelector('[name=end]').value, from: from, to: null }; }).filter(function (s) { return s.start; });
+      var c = classes()[cl.id], prev = K.addDays(from, -1);
+      c.slots = (c.slots || []).filter(function (s) { return !(s.from && s.from >= from); }).map(function (s) { if (!s.to || s.to >= from) s.to = prev; return s; }).filter(function (s) { return !s.from || s.from <= s.to; }).concat(ns);
+      saveCls(c); toast('Đã lưu lịch, áp dụng từ ' + dmyy(from)); viewClassSet(c);
     });
-    var f2 = document.getElementById('lp-info');
-    if (f2) f2.addEventListener('submit', function (ev) {
-      ev.preventDefault(); var d = new FormData(f2), c = classes()[cl.id];
-      c.name = String(d.get('name') || c.name).trim(); c.color = d.get('color'); c.grade = +d.get('grade'); c.price = +d.get('price') || 0;
-      c.billing = { mode: d.get('mode'), size: +d.get('size') || 5, dueDay: +d.get('dueDay') || 5, grace: +d.get('grace') || 0, when: (c.billing || {}).when || 'after' };
-      saveCls(c); toast('Đã lưu'); viewClass(cl.id, ym, 'set');
+    var f2 = document.getElementById('lp-fee');
+    f2.mode.addEventListener('change', function () { f2.querySelector('.pk').hidden = f2.mode.value !== 'pack'; });
+    f2.addEventListener('submit', function (ev) {
+      ev.preventDefault(); var c = classes()[cl.id], np = +f2.price.value || 0, from = f2.from.value || m1;
+      if (np !== K.priceOf(c, null, from)) { c.prices = (c.prices || []).filter(function (p) { return p.from < from; }); c.prices.push({ from: from, price: np }); }
+      c.billing = { mode: f2.mode.value, size: +f2.size.value || 5, dueDay: +f2.dueDay.value || 5, grace: +f2.grace.value || 0, when: f2.when.value };
+      saveCls(c); toast('Đã lưu học phí'); viewClassSet(c);
     });
-    var f3 = document.getElementById('lp-addst');
-    if (f3) {
-      var nm = f3.querySelector('[name=name]'), us = f3.querySelector('[name=user]'), touched = false;
-      us.addEventListener('input', function () { touched = true; });
-      nm.addEventListener('input', function () { if (!touched) us.value = uname(nm.value); });
-      f3.addEventListener('submit', function (ev) {
-        ev.preventDefault(); var d = new FormData(f3), name = String(d.get('name') || '').trim(), u = uname(d.get('user') || name);
-        if (!name) return; var c = classes()[cl.id], sid = cl.id + '-' + (u || 'hs') + '-' + Date.now().toString(36).slice(-4);
-        var st = { id: sid, name: name, user: null, joined: d.get('joined') || today() }; if (+d.get('price')) st.price = +d.get('price');
-        if (d.get('acc')) {
-          var all = LN.users();
-          if (!/^[a-z0-9_]{3,20}$/.test(u)) { toast('Tên đăng nhập cần 3–20 chữ thường không dấu/số.'); return; }
-          if (all[u]) { toast('Tên đăng nhập “' + u + '” đã có. Đổi tên khác (vd. ' + u + '2).'); return; }
-          all[u] = { name: name, grade: c.grade, pass: LN.hash(u + ':123456'), mail: '', created: Date.now(), last: 0, status: 'active', byAdmin: true, cls: c.id, joined: st.joined };
-          store.set('ln_users', all); st.user = u;
-        }
-        c.students.push(st); saveCls(c); toast('Đã thêm ' + name + (st.user ? ' · tài khoản ' + st.user + ' / 123456' : '')); viewClass(cl.id, ym, 'hs');
-      });
-    }
+    var f3 = document.getElementById('lp-info');
+    f3.addEventListener('submit', function (ev) { ev.preventDefault(); var c = classes()[cl.id]; c.name = f3.name.value.trim() || c.name; c.color = f3.color.value; c.grade = +f3.grade.value; saveCls(c); toast('Đã lưu'); viewClassSet(c); });
   }
 
-  /* ================= Trang: Học phí ================= */
-  var HPF = 'all';
+  /* ================= Học phí tất cả các lớp ================= */
+  var ONLY_DEBT = false;
   function viewHocPhi(ym) {
-    if (seedPending()) return viewLop();
+    if (ensureSeed() === 'wait') { shell('hocphi', '<div class="card"><p class="muted">Đang tải…</p></div>'); return; }
     ym = /^\d{4}-\d{2}$/.test(ym || '') ? ym : K.ymOf(today());
-    var cls = clsList(), td = today(), S = { b: 0, p: 0, r: 0, od: 0, odn: 0, debt: 0 };
-    var sections = cls.map(function (cl) {
-      var rows = (cl.students || []).filter(function (st) { return !st.left || st.left >= ym + '-01'; }).map(function (st) {
-        var L = ledgerOf(cl, st, ym), cur = L.rows.filter(function (r) { return r.id === ym || (r.kind === 'pack' && K.ymOf(r.due) === ym); });
-        var b = cur.reduce(function (s, r) { return s + r.amount; }, 0), p = cur.reduce(function (s, r) { return s + r.paid; }, 0), rem = cur.reduce(function (s, r) { return s + r.rem; }, 0);
-        var n = cur.reduce(function (s, r) { return s + r.n; }, 0), status = cur.length ? (cur.some(function (r) { return r.status === 'overdue'; }) ? 'overdue' : cur.every(function (r) { return r.status === 'paid'; }) ? 'paid' : cur.some(function (r) { return r.paid > 0; }) ? 'partial' : 'due') : null;
-        var old = L.rows.filter(function (r) { return r.due < (cur[0] ? cur[0].due : ym + '-99') && cur.indexOf(r) < 0 && r.rem > 0; }).reduce(function (s, r) { return s + r.rem; }, 0);
-        S.b += b; S.p += p; S.r += rem; if (status === 'overdue') { S.od += rem; S.odn++; } S.debt += L.debt;
-        return { st: st, L: L, cur: cur, b: b, p: p, rem: rem, n: n, status: status, old: old };
-      }).filter(function (x) { return HPF === 'all' || (HPF === 'debt' ? x.L.debt > 0 : x.status === 'overdue'); });
+    var S = { fee: 0, paid: 0, tot: 0, n: 0 };
+    var sec = clsList().map(function (cl) {
+      var rows = curStudents(cl, ym).map(function (st) { var R = report(cl, st, ym); S.fee += R.fee; S.paid += R.feePaid; S.tot += R.total; if (R.total > 0) S.n++; return { st: st, R: R }; })
+        .filter(function (x) { return !ONLY_DEBT || x.R.total > 0; });
       if (!rows.length) return '';
-      var pk = cl.billing && cl.billing.mode === 'pack';
-      return '<div class="card lp-hp" style="--c:' + esc(cl.color) + '"><div class="chead"><h2><span class="lp-dot"></span>' + esc(cl.name) + '</h2><span class="small muted">' + esc(billTxt(cl)) + '</span></div><div class="tblw"><table class="tbl"><thead><tr><th>Học sinh</th><th>' + (pk ? 'Gói đến hạn' : 'Số buổi') + '</th><th>Phải đóng</th><th>Đã đóng</th><th>Còn thiếu</th><th>Hạn</th><th>Trạng thái</th><th></th></tr></thead><tbody>' +
+      return '<div class="card hp-c" style="--c:' + esc(cl.color) + '"><div class="hp-h"><h2><span class="lp-dot"></span>' + esc(cl.name) + '</h2><a class="btn btn-sm" href="#/admin/phieu/' + esc(cl.id) + '/' + ym + '">📄 Phiếu cả lớp</a></div><div class="tblw"><table class="tbl hp-t"><thead><tr><th>Học sinh</th><th>Buổi</th><th>Học phí ' + mTxt(ym) + '</th><th>Nợ trước</th><th>Đã đóng</th><th>Còn phải đóng</th><th></th></tr></thead><tbody>' +
         rows.map(function (x) {
-          var prog = pk && x.L.rows.length >= 0 ? K.periods(cl, cdata(cl.id), x.st, td).progress : null;
-          return '<tr><td><a href="#/admin/hs/' + esc(x.st.id) + '"><b>' + esc(x.st.name) + '</b></a>' + (x.old ? '<br><span class="tiny" style="color:var(--red-dk)">+ nợ kỳ trước ' + money(x.old) + '</span>' : '') + (x.L.credit ? '<br><span class="tiny" style="color:var(--mint-dk)">dư ' + money(x.L.credit) + '</span>' : '') + '</td>' +
-            '<td>' + (pk ? (x.cur.length ? x.cur.map(function (r) { return r.label; }).join(', ') : '—') + (prog ? '<br><span class="tiny muted">đang học ' + prog.done + '/' + prog.size + ' buổi gói kế</span>' : '') : x.n) + '</td><td>' + money(x.b) + '</td><td>' + money(x.p) + '</td><td>' + (x.rem > 0 ? '<b style="color:var(--red-dk)">' + money(x.rem) + '</b>' : x.b ? '<span style="color:var(--mint-dk)">0</span>' : '—') + '</td>' +
-            '<td>' + (x.cur[0] ? dmyy(x.cur[0].due) : '—') + '</td><td>' + (x.status ? stTag(x.status) : '<span class="tiny muted">chưa phát sinh</span>') + '</td>' +
-            '<td class="lp-tact"><button class="btn btn-sm btn-mint" data-act="lp-pay" data-s="' + esc(x.st.id) + '" data-amt="' + (x.rem + x.old) + '">＋ Thu</button><button class="btn btn-sm" data-act="lp-msg" data-s="' + esc(x.st.id) + '" data-m="' + ym + '" title="Soạn tin nhắn gửi phụ huynh">💬</button></td></tr>';
+          var R = x.R, od = R.total > 0 && R.due && today() > R.due;
+          return '<tr><td><button class="nm-b" data-act="lp-stu" data-s="' + esc(x.st.id) + '" data-m="' + ym + '">' + esc(x.st.name) + '</button></td><td>' + R.count.p + '</td><td>' + money(R.fee) + '</td><td>' + (R.oldRem ? '<span class="neg">' + money(R.oldRem) + '</span>' : '–') + '</td><td>' + (R.feePaid ? money(R.feePaid) : '–') + '</td>' +
+            '<td>' + (R.total > 0 ? '<b class="neg">' + money(R.total) + '</b>' + (od ? ' <span class="tag tag-red">quá hạn</span>' : '') : '<span class="ok">Đủ ✓</span>') + '</td>' +
+            '<td class="hp-a"><button class="btn btn-sm btn-mint" data-act="lp-pay" data-s="' + esc(x.st.id) + '" data-m="' + ym + '">＋ Thu</button><a class="btn btn-sm" href="#/admin/phieu/' + esc(cl.id) + '/' + ym + '/' + esc(x.st.id) + '" title="Phiếu báo">📄</a></td></tr>';
         }).join('') + '</tbody></table></div></div>';
     }).join('');
-    var body = '<div class="chead"><div><h1>Học phí</h1><p class="muted">Tự tính theo quy định từng lớp từ bảng điểm danh. Tháng cũ vẫn giữ nguyên để báo cáo.</p></div>' +
-      '<div class="lp-mnav"><a class="btn btn-sm" href="#/admin/hocphi/' + K.ymAdd(ym, -1) + '">‹</a><input type="month" class="inp" id="lp-mpick" value="' + ym + '" style="width:auto" aria-label="Chọn tháng"><a class="btn btn-sm" href="#/admin/hocphi/' + K.ymAdd(ym, 1) + '">›</a></div></div>' +
-      '<div class="row" style="margin-bottom:14px"><div class="stat"><p class="k">Phải thu ' + ymTxt(ym).toLowerCase() + '</p><p class="v">' + money(S.b) + '</p></div><div class="stat"><p class="k">Đã thu</p><p class="v" style="color:var(--mint-dk)">' + money(S.p) + '</p></div><div class="stat"><p class="k">Còn thiếu</p><p class="v" style="color:var(--red-dk)">' + money(S.r) + '</p></div><div class="stat"><p class="k">Quá hạn</p><p class="v" style="color:var(--red-dk)">' + S.odn + ' HS · ' + money(S.od) + '</p></div></div>' +
-      '<div class="seg" style="margin-bottom:12px">' + [['all', 'Tất cả'], ['debt', 'Còn nợ'], ['over', 'Quá hạn']].map(function (f) { return '<button type="button" class="' + (HPF === f[0] ? 'on' : '') + '" data-act="lp-hpf" data-f="' + f[0] + '">' + f[1] + '</button>'; }).join('') + '<button type="button" data-act="lp-csv" data-m="' + ym + '">⬇ Xuất Excel</button></div>' +
-      (sections || '<p class="muted">Không có học sinh nào phù hợp.</p>');
+    var body = '<div class="ad-h"><div><h1>Học phí</h1><p class="muted">Học phí tháng = số buổi có mặt × giá. Tháng trước còn thiếu thì tự cộng dồn sang.</p></div>' +
+      '<div class="sh-mnav"><a class="btn btn-sm" href="#/admin/hocphi/' + K.ymAdd(ym, -1) + '" aria-label="Tháng trước">‹</a><h2>' + ymTxt(ym) + '</h2><a class="btn btn-sm" href="#/admin/hocphi/' + K.ymAdd(ym, 1) + '" aria-label="Tháng sau">›</a></div></div>' +
+      '<div class="hp-stats"><div><span>Học phí ' + mTxt(ym) + '</span><b>' + money(S.fee) + '</b></div><div><span>Đã thu</span><b class="ok">' + money(S.paid) + '</b></div><div><span>Còn phải thu (gồm nợ cũ)</span><b class="neg">' + money(S.tot) + '</b><small>' + S.n + ' học sinh</small></div></div>' +
+      '<div class="hp-f"><label class="chk" style="margin:0"><input type="checkbox" data-act="lp-onlydebt"' + (ONLY_DEBT ? ' checked' : '') + '><span>Chỉ hiện bạn còn phải đóng</span></label><button class="btn btn-sm" data-act="lp-csv" data-m="' + ym + '">⬇ Xuất Excel</button></div>' +
+      (sec || '<p class="muted">Không có học sinh nào.</p>');
     shell('hocphi', body);
-    var mp = document.getElementById('lp-mpick'); if (mp) mp.addEventListener('change', function () { if (mp.value) LN.go('#/admin/hocphi/' + mp.value); });
   }
-
-  /* ================= Hồ sơ học sinh: các buổi đã học, học phí, lịch sử đóng tiền ================= */
-  function viewStudent(sid) {
-    var x = stuOf(sid); if (!x) { LN.go('#/admin/lop'); return; }
-    var cl = x.cl, st = x.st, cd = cdata(cl.id), td = today(), L = ledgerOf(cl, st), u = st.user && LN.users()[st.user];
-    var months = {}, from = K.firstMonth(cl) + '-01';
-    K.sessions(cl, cd, from, td).forEach(function (s) { if (!K.activeOn(st, s.date)) return; (months[K.ymOf(s.date)] = months[K.ymOf(s.date)] || []).push(s); });
-    var body = '<a href="#/admin/lop/' + esc(cl.id) + '" class="backlink">← ' + esc(cl.name) + '</a><div class="lp-hero" style="--c:' + esc(cl.color) + ';--t:' + txtColor(cl.color) + '"><div><h1>' + esc(st.name) + '</h1><p>' + esc(cl.name) + ' · ' + esc(billTxt(cl)) + (st.price ? ' · giá riêng ' + money(st.price) : '') + '</p><p>' + (st.user ? '👤 Tài khoản <b>' + esc(st.user) + '</b>' + (u ? '' : ' (không tìm thấy)') : '⚠ Chưa có tài khoản học app') + '</p></div>' +
-      '<div class="lp-hsum"><p>Tổng phải đóng <b>' + money(L.billed) + '</b></p><p>Đã đóng <b>' + money(L.paid) + '</b></p><p>' + (L.debt ? 'Còn nợ <b class="neg">' + money(L.debt) + '</b>' : L.credit ? 'Dư <b>' + money(L.credit) + '</b>' : '<b>✓ Không nợ</b>') + '</p></div></div>';
-    if (!st.user) body += '<div class="card"><h2>Tạo tài khoản học app</h2><form id="lp-mkacc" class="two" style="align-items:end"><div class="field"><label for="lp-acc">Tên đăng nhập</label><input class="inp" id="lp-acc" name="user" value="' + esc(uname(st.name)) + '"></div><div><button class="btn btn-pink" type="submit">Tạo (mật khẩu 123456)</button></div></form><p class="tiny muted">Tên “' + esc(uname(st.name)) + '” có thể đang trùng với bạn khác – thêm số lớp hoặc chữ cái, vd. ' + esc(uname(st.name)) + (cl.grade < 100 ? cl.grade : 'up') + '.</p></div>';
-    body += '<div class="card"><div class="chead"><h2>Học phí từng kỳ</h2><button class="btn btn-sm btn-mint" data-act="lp-pay" data-s="' + esc(sid) + '" data-amt="' + L.debt + '">＋ Ghi nhận đóng tiền</button></div>' +
-      (L.rows.length ? '<div class="tblw"><table class="tbl"><thead><tr><th>Kỳ</th><th>Buổi</th><th>Phải đóng</th><th>Đã đóng</th><th>Còn</th><th>Hạn</th><th>Trạng thái</th></tr></thead><tbody>' + L.rows.slice().reverse().map(function (r) {
-        return '<tr><td><b>' + esc(r.label) + '</b>' + (r.closed ? ' 🔒' : '') + '<br><span class="tiny muted">' + r.dates.map(dmy).join(', ') + '</span></td><td>' + r.n + '</td><td>' + money(r.amount) + '</td><td>' + money(r.paid) + '</td><td>' + (r.rem > 0 ? '<b style="color:var(--red-dk)">' + money(r.rem) + '</b>' : '0') + '</td><td>' + dmyy(r.due) + '</td><td>' + stTag(r.status) + '</td></tr>';
-      }).join('') + '</tbody></table></div>' : '<p class="muted">Chưa phát sinh học phí.</p>') +
-      (cl.billing && cl.billing.mode === 'pack' ? '<p class="small" style="margin-top:8px">📦 Gói đang học: <b>' + K.periods(cl, cd, st, td).progress.done + '/' + (cl.billing.size || 5) + '</b> buổi</p>' : '') + '</div>';
-    body += '<div class="card"><h2>Lịch sử đóng tiền</h2>' + (L.pays.length ? '<div class="tblw"><table class="tbl"><thead><tr><th>Ngày</th><th>Số tiền</th><th>Hình thức</th><th>Ghi chú</th><th></th></tr></thead><tbody>' + L.pays.slice().reverse().map(function (p) {
-      return '<tr><td>' + dmyy(p.date) + '</td><td><b>' + money(p.amount) + '</b></td><td>' + esc(p.method || '') + '</td><td>' + esc(p.note || '') + '</td><td><button class="btn btn-sm" data-act="lp-delpay" data-s="' + esc(sid) + '" data-id="' + esc(p.id) + '" aria-label="Xoá">✕</button></td></tr>';
-    }).join('') + '</tbody></table></div>' : '<p class="muted">Chưa có lần đóng tiền nào.</p>') + '</div>';
-    body += '<div class="card"><h2>Các buổi học</h2>' + Object.keys(months).sort().reverse().map(function (m) {
-      var ss = months[m], pres = ss.filter(function (s) { return !s.off && K.mark(cd, s.key, st.id) === 1; }).length;
-      return '<details class="lp-mon"' + (m === K.ymOf(td) ? ' open' : '') + '><summary><b>' + ymTxt(m) + '</b> · đi học <b>' + pres + '</b>/' + ss.filter(function (s) { return !s.off; }).length + ' buổi</summary><div class="lp-dl">' + ss.map(function (s) {
-        var v = K.mark(cd, s.key, st.id), t = s.off ? ['–', 'Lớp nghỉ', 'off'] : v === 1 ? ['✅', 'Có mặt', 'p'] : v === 0 ? ['❌', 'Vắng', 'a'] : v === 2 ? ['🟡', 'Có phép', 'e'] : s.date > td ? ['·', 'Sắp tới', 'f'] : ['?', 'Chưa điểm danh', 'n'];
-        return '<span class="lp-d ' + t[2] + '" title="' + t[1] + '">' + t[0] + ' ' + DOWS_S[K.dow(s.date)] + ' ' + dmy(s.date) + '</span>';
-      }).join('') + '</div></details>';
-    }).join('') + '</div>';
-    if (!st.left) body += '<p style="margin-top:12px"><button class="btn btn-sm" data-act="lp-leave" data-s="' + esc(sid) + '">Cho bé nghỉ học từ hôm nay</button></p>';
-    shell('lop', body);
-    var fa = document.getElementById('lp-mkacc');
-    if (fa) fa.addEventListener('submit', function (ev) {
-      ev.preventDefault(); var v = uname(fa.user.value), all = LN.users();
-      if (!/^[a-z0-9_]{3,20}$/.test(v)) { toast('Tên đăng nhập cần 3–20 chữ thường không dấu/số.'); return; }
-      if (all[v]) { toast('“' + v + '” đã có người dùng. Chọn tên khác.'); return; }
-      all[v] = { name: st.name, grade: cl.grade, pass: LN.hash(v + ':123456'), mail: '', created: Date.now(), last: 0, status: 'active', byAdmin: true, cls: cl.id, joined: today() };
-      store.set('ln_users', all); var c = classes()[cl.id]; c.students.forEach(function (s) { if (s.id === sid) s.user = v; }); saveCls(c);
-      toast('Đã tạo tài khoản ' + v + ' / 123456'); viewStudent(sid);
-    });
-  }
-
-  /* ---- Thu tiền ---- */
-  function payModal(sid, amt) {
-    var x = stuOf(sid); if (!x) return;
-    modal('<h2>Ghi nhận đóng tiền</h2><p class="muted">' + esc(x.st.name) + ' · ' + esc(x.cl.name) + '</p><form id="lp-payf"><div class="two"><div class="field"><label for="lp-pamt">Số tiền thực nhận (đ)</label><input class="inp" type="number" step="1000" id="lp-pamt" name="amount" value="' + (Math.max(0, +amt) || '') + '" required></div><div class="field"><label for="lp-pdate">Ngày nhận</label><input class="inp" type="date" id="lp-pdate" name="date" value="' + today() + '"></div></div>' +
-      '<div class="two"><div class="field"><label for="lp-pm">Hình thức</label><select class="sel" id="lp-pm" name="method"><option>Tiền mặt</option><option>Chuyển khoản</option></select></div><div class="field"><label for="lp-pn">Ghi chú</label><input class="inp" id="lp-pn" name="note" placeholder="vd. đóng thiếu, hẹn tuần sau"></div></div>' +
-      '<p class="tiny muted">Đóng thiếu cứ nhập số tiền thực nhận – phần còn lại tự ghi là còn nợ. Tiền trừ vào kỳ cũ nhất trước.</p><button class="btn btn-lg btn-pink" type="submit">Lưu</button></form>');
-    document.getElementById('lp-payf').addEventListener('submit', function (ev) {
-      ev.preventDefault(); var d = new FormData(ev.target), a = +d.get('amount'); if (!(a > 0)) { toast('Nhập số tiền.'); return; }
-      var P = pays(); P[sid] = P[sid] || []; P[sid].push({ id: 'p' + Date.now().toString(36), date: d.get('date') || today(), amount: a, method: d.get('method'), note: String(d.get('note') || '').trim(), at: Date.now() });
-      store.set('ln_pay', P); closeModal(); toast('Đã ghi nhận ' + money(a)); refresh();
-    });
-  }
-  function msgText(sid, ym) {
-    var x = stuOf(sid), cl = x.cl, st = x.st, L = ledgerOf(cl, st, ym), cur = L.rows.filter(function (r) { return r.id === ym || (r.kind === 'pack' && K.ymOf(r.due) === ym); });
-    var t = 'Aurora English xin gửi phụ huynh bé ' + st.name + ' (' + cl.name + '):\n';
-    cur.forEach(function (r) { t += '• ' + r.label + ': ' + r.n + ' buổi (' + r.dates.map(dmy).join(', ') + ') × ' + money(K.priceOf(cl, st)) + ' = ' + money(r.amount) + (r.paid ? ', đã đóng ' + money(r.paid) : '') + '\n'; });
-    var older = L.rows.filter(function (r) { return cur.indexOf(r) < 0 && r.rem > 0; });
-    older.forEach(function (r) { t += '• Còn nợ ' + r.label + ': ' + money(r.rem) + '\n'; });
-    t += 'Tổng cần đóng: ' + money(L.debt) + (cur[0] ? ' – hạn ' + dmyy(cur[0].due) : '') + '.\nCảm ơn phụ huynh đã đồng hành cùng con! 💛';
-    return t;
-  }
-
-  /* ---- Xuất Excel (CSV) ---- */
   function exportCsv(ym) {
-    var rows = [['Lớp', 'Học sinh', 'Tài khoản', 'Kỳ', 'Số buổi', 'Ngày học', 'Đơn giá', 'Phải đóng', 'Đã đóng', 'Còn thiếu', 'Hạn', 'Trạng thái']];
-    clsList().forEach(function (cl) { (cl.students || []).forEach(function (st) { ledgerOf(cl, st, ym).rows.filter(function (r) { return r.id === ym || (r.kind === 'pack' && K.ymOf(r.due) === ym); }).forEach(function (r) {
-      rows.push([cl.name, st.name, st.user || '', r.label, r.n, r.dates.map(dmy).join(' '), K.priceOf(cl, st), r.amount, r.paid, r.rem, dmyy(r.due), (STL[r.status] || STL.due)[0]]);
-    }); }); });
+    var rows = [['Lớp', 'Học sinh', 'Tài khoản', 'Số buổi có mặt', 'Vắng', 'Có phép', 'Học phí tháng', 'Nợ trước', 'Đã đóng', 'Còn phải đóng', 'Hạn']];
+    clsList().forEach(function (cl) { curStudents(cl, ym).forEach(function (st) { var R = report(cl, st, ym); rows.push([cl.name, st.name, st.user || '', R.count.p, R.count.a, R.count.e, R.fee, R.oldRem, R.feePaid, R.total, R.due ? dmyy(R.due) : '']); }); });
     var csv = '﻿' + rows.map(function (r) { return r.map(function (v) { v = String(v == null ? '' : v); return /[",;\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(','); }).join('\n');
     var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })); a.download = 'hoc-phi-' + ym + '.csv'; document.body.appendChild(a); a.click(); a.remove();
+  }
+
+  /* ================= Phiếu báo học phí gửi phụ huynh ================= */
+  function phieuHtml(cl, st, ym) {
+    var R = report(cl, st, ym), B = bank(), pack = (cl.billing || {}).mode === 'pack', note = payNote(st, ym);
+    var qr = B.qr && K.qrValid(B.qr) ? (B.amt ? K.vietqr(B.qr, R.total, note) : B.qr) : '';
+    var chips = R.sessions.filter(function (s) { return s.v != null || s.date <= today(); }).map(function (s) { var t = s.off ? ['off', '–'] : s.v === 1 ? ['p', '✓'] : s.v === 0 ? ['a', '✗'] : s.v === 2 ? ['e', 'P'] : ['n', '·']; return '<span class="rp-s ' + t[0] + '"><i>' + t[1] + '</i>' + DOWS_S[K.dow(s.date)] + ' ' + dmy(s.date) + '</span>'; }).join('');
+    var lines = '';
+    R.cur.forEach(function (r) { lines += '<tr><td>' + (pack ? esc(r.label) + ': ' + r.size + ' buổi × ' + money(r.price) : 'Học phí ' + mTxt(ym) + ': ' + r.n + ' buổi × ' + money(r.price)) + '</td><td>' + money(r.amount) + '</td></tr>'; });
+    if (!R.cur.length) lines += '<tr><td>Học phí ' + mTxt(ym) + (pack ? ' (chưa đủ gói)' : ': 0 buổi') + '</td><td>0đ</td></tr>';
+    if (R.feePaid) lines += '<tr><td>Đã đóng</td><td>−' + money(R.feePaid) + '</td></tr>';
+    R.old.forEach(function (r) { lines += '<tr class="old"><td>Còn thiếu ' + esc(r.label.toLowerCase()) + ' (cộng dồn)</td><td>+' + money(r.rem) + '</td></tr>'; });
+    return '<article class="rp" id="rp-' + esc(st.id) + '" style="--c:' + esc(cl.color) + '">' +
+      '<header class="rp-h">' + LN.logo(44) + '<div><b>AURORA ENGLISH</b><span>Phiếu báo học tập & học phí</span></div><em>' + ymTxt(ym) + '</em></header>' +
+      '<div class="rp-who"><div><span>Học sinh</span><b>' + esc(st.name) + '</b></div><div><span>Lớp</span><b>' + esc(cl.name) + '</b></div></div>' +
+      '<h3>Điểm danh</h3><p class="rp-cnt">Có mặt <b>' + R.count.p + '</b> · Vắng <b>' + R.count.a + '</b> · Có phép <b>' + R.count.e + '</b></p><div class="rp-ss">' + (chips || '<span class="muted small">Chưa có buổi học</span>') + '</div>' +
+      (R.progress ? '<p class="small">Gói đang học: ' + R.progress.done + '/' + R.progress.size + ' buổi</p>' : '') +
+      '<h3>Học phí</h3><table class="rp-t"><tbody>' + lines + '</tbody><tfoot><tr><td>TỔNG CẦN ĐÓNG' + (R.total > 0 && R.due ? '<small>Hạn đóng: ' + dmyy(R.due) + '</small>' : '') + '</td><td>' + (R.total > 0 ? money(R.total) : 'Đã đủ ✓') + '</td></tr></tfoot></table>' +
+      (R.credit ? '<p class="small">Phụ huynh đã đóng dư ' + money(R.credit) + ', sẽ trừ vào tháng sau.</p>' : '') +
+      (R.total > 0 && qr ? '<div class="rp-qr">' + qrSvg(qr, 150) + '<div><b>' + esc(B.bank) + '</b><span>' + esc(B.holder) + '</span>' + (B.amt ? '<span>Số tiền: <b>' + money(R.total) + '</b></span><span>Nội dung: <b>' + esc(K.asciiNote(note)) + '</b></span><small>Quét mã bằng app ngân hàng – số tiền và nội dung đã điền sẵn.</small>' : '<span>Nội dung CK: <b>' + esc(K.asciiNote(note)) + '</b></span>') + '</div></div>' : '') +
+      '<div class="rp-note" contenteditable="true" data-ph="Nhận xét của cô (bấm để viết)…"></div>' +
+      '<footer class="rp-f">Cảm ơn phụ huynh đã đồng hành cùng con! 💛</footer>' +
+      '<div class="rp-acts"><button class="btn btn-sm btn-pink" data-act="lp-img" data-s="' + esc(st.id) + '" data-m="' + ym + '">⬇ Tải ảnh / Gửi Zalo</button><button class="btn btn-sm" data-act="lp-msg" data-s="' + esc(st.id) + '" data-m="' + ym + '">📋 Sao chép tin nhắn</button><button class="btn btn-sm btn-mint" data-act="lp-pay" data-s="' + esc(st.id) + '" data-m="' + ym + '">＋ Thu tiền</button></div></article>';
+  }
+  function viewPhieu(cid, ym, sid) {
+    if (ensureSeed() === 'wait') { shell('hocphi', '<div class="card"><p class="muted">Đang tải…</p></div>'); return; }
+    var cl = classes()[cid]; if (!cl) { LN.go('#/admin/hocphi'); return; }
+    ym = /^\d{4}-\d{2}$/.test(ym || '') ? ym : K.ymOf(today());
+    var sts = sid ? cl.students.filter(function (s) { return s.id === sid; }) : curStudents(cl, ym);
+    var base = '#/admin/phieu/' + cid + '/';
+    var body = '<div class="rp-bar no-print"><a href="#/admin/lop/' + esc(cid) + '/' + ym + '" class="backlink">← Bảng ' + esc(cl.name) + '</a><div class="sh-mnav"><a class="btn btn-sm" href="' + base + K.ymAdd(ym, -1) + (sid ? '/' + sid : '') + '">‹</a><h2>Phiếu báo ' + mTxt(ym) + '</h2><a class="btn btn-sm" href="' + base + K.ymAdd(ym, 1) + (sid ? '/' + sid : '') + '">›</a></div>' +
+      '<div class="sh-tools">' + (sid ? '<a class="btn btn-sm" href="' + base + ym + '">Cả lớp</a>' : '') + '<button class="btn btn-sm btn-pink" data-act="lp-print">🖨 In / Lưu PDF</button></div></div>' +
+      (bank().qr && K.qrValid(bank().qr) ? '' : '<div class="note note-yel no-print">Chưa có mã QR chuyển khoản hợp lệ – vào <a href="#/admin/caidat">Cài đặt</a>.</div>') +
+      '<div class="rp-list">' + sts.map(function (st) { return phieuHtml(cl, st, ym); }).join('') + '</div>';
+    shell('hocphi', body);
+  }
+  function msgText(sid, ym) {
+    var x = stuOf(sid), cl = x.cl, st = x.st, R = report(cl, st, ym), pack = (cl.billing || {}).mode === 'pack', B = bank();
+    var t = 'Aurora English gửi phụ huynh bé ' + st.name + ' (' + cl.name + ') – ' + ymTxt(ym).toLowerCase() + ':\n';
+    t += '• Đi học ' + R.count.p + ' buổi' + (R.count.a ? ', vắng ' + R.count.a : '') + (R.count.e ? ', có phép ' + R.count.e : '') + '.\n';
+    R.cur.forEach(function (r) { t += '• ' + (pack ? r.label + ': ' + r.size + ' buổi × ' + money(r.price) : 'Học phí ' + mTxt(ym) + ': ' + r.n + ' buổi × ' + money(r.price)) + ' = ' + money(r.amount) + '\n'; });
+    if (R.feePaid) t += '• Đã đóng: ' + money(R.feePaid) + '\n';
+    R.old.forEach(function (r) { t += '• Còn thiếu ' + r.label.toLowerCase() + ': ' + money(r.rem) + ' (cộng dồn)\n'; });
+    t += R.total > 0 ? '👉 Tổng cần đóng: ' + money(R.total) + (R.due ? ' – hạn ' + dmyy(R.due) : '') + '.\nChuyển khoản ' + B.bank + ' – ' + B.holder + ', nội dung: ' + K.asciiNote(payNote(st, ym)) + ' (quét mã QR trong phiếu).\n' : '👉 Học phí đã đóng đủ.\n';
+    return t + 'Cảm ơn phụ huynh đã đồng hành cùng con! 💛';
+  }
+  function loadH2C() {
+    if (window.html2canvas) return Promise.resolve(window.html2canvas);
+    return new Promise(function (ok, no) { var s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'; s.onload = function () { ok(window.html2canvas); }; s.onerror = no; document.head.appendChild(s); });
+  }
+  function saveImg(sid, ym) {
+    var el = document.getElementById('rp-' + sid), x = stuOf(sid); if (!el || !x) return;
+    toast('Đang tạo ảnh…'); el.classList.add('snap');
+    loadH2C().then(function (h2c) { return h2c(el, { scale: 2, backgroundColor: '#ffffff', useCORS: true }); }).then(function (cv) {
+      el.classList.remove('snap');
+      var name = 'phieu-' + (x.st.user || uname(x.st.name)) + '-' + ym + '.png';
+      cv.toBlob(function (blob) {
+        var file = typeof File !== 'undefined' ? new File([blob], name, { type: 'image/png' }) : null;
+        if (file && navigator.canShare && navigator.canShare({ files: [file] })) { navigator.share({ files: [file], title: name }).catch(function () {}); return; }
+        var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); toast('Đã tải ảnh ' + name);
+      }, 'image/png');
+    }, function () { el.classList.remove('snap'); toast('Chưa tạo được ảnh (cần mạng). Cô chụp màn hình phiếu hoặc bấm In / Lưu PDF.'); });
+  }
+  function copy(text) {
+    function fb() { var ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch (e) {} ta.remove(); toast('Đã sao chép'); }
+    try { navigator.clipboard.writeText(text).then(function () { toast('Đã sao chép – dán vào Zalo nhé'); }, fb); } catch (e) { fb(); }
+  }
+
+  /* ================= Cài đặt ================= */
+  function viewSettings() {
+    var B = bank(), ok = K.qrValid(B.qr);
+    var body = '<h1>Cài đặt</h1>' +
+      '<div class="card"><h2>🏦 Chuyển khoản học phí</h2><p class="small muted">Dùng cho mã QR trên phiếu báo gửi phụ huynh.</p><form id="bk-f"><div class="two">' + field('bk-b', 'Ngân hàng', '<input class="inp" id="bk-b" name="bank" value="' + esc(B.bank) + '">') + field('bk-h', 'Chủ tài khoản', '<input class="inp" id="bk-h" name="holder" value="' + esc(B.holder) + '">') + '</div>' +
+      field('bk-q', 'Mã QR gốc (chuỗi VietQR đọc từ ảnh QR của ngân hàng)', '<textarea class="inp" id="bk-q" name="qr" rows="3" style="font-family:monospace;font-size:12px">' + esc(B.qr) + '</textarea>') +
+      '<label class="chk"><input type="checkbox" name="amt"' + (B.amt ? ' checked' : '') + '><span>Điền sẵn số tiền và nội dung vào mã QR (phụ huynh quét là đủ thông tin)</span></label><button class="btn btn-pink" type="submit">Lưu</button></form>' +
+      '<div class="bk-prev">' + (ok ? qrSvg(B.amt ? K.vietqr(B.qr, 10000, 'HP thu') : B.qr, 140) + '<p class="small">Mã thử' + (B.amt ? ' (10.000đ, nội dung “HP thu”)' : '') + '. Cô quét bằng app ngân hàng một lần để kiểm tra đúng tên <b>' + esc(B.holder) + '</b>.</p>' : '<p class="small" style="color:var(--red-dk)">Mã QR gốc chưa hợp lệ.</p>') + '</div></div>' +
+      '<div class="card st-links">' + [['#/admin/account', 'key', 'Mật khẩu & tài khoản giáo viên'], ['#/admin/data', 'db', 'Sao lưu / khôi phục dữ liệu'], ['#/admin/ai', 'bot', 'Trợ lý AI Chíp'], ['#/admin/grammar', 'book', 'Ngữ pháp tổng hợp'], ['#/admin/students', 'users', 'Tất cả tài khoản học sinh']].map(function (l) { return '<a href="' + l[0] + '">' + ic(l[1], 20) + '<span>' + l[2] + '</span><b>›</b></a>'; }).join('') + '</div>';
+    shell('caidat', body);
+    var f = document.getElementById('bk-f');
+    f.addEventListener('submit', function (ev) {
+      ev.preventDefault(); var q = f.qr.value.replace(/\s+/g, '');
+      if (q && !K.qrValid(q)) { toast('Mã QR gốc không đúng (sai mã kiểm tra). Kiểm tra lại.'); return; }
+      store.set('ln_bank', { bank: f.bank.value.trim(), holder: f.holder.value.trim(), qr: q, amt: f.amt.checked }); toast('Đã lưu'); viewSettings();
+    });
   }
 
   /* ================= Xử lý bấm nút ================= */
   var prev = LN.adminClick;
   LN.adminClick = function (a, t, ev) {
     if (!a || a.indexOf('lp-') !== 0) return prev(a, t, ev);
-    var cid = t.getAttribute('data-c'), key = t.getAttribute('data-k'), sid = t.getAttribute('data-s');
+    var cid = t.getAttribute('data-c'), key = t.getAttribute('data-k'), sid = t.getAttribute('data-s'), ym = t.getAttribute('data-m');
     if (a === 'lp-close') return closeModal();
-    if (a === 'lp-seed') { var rep = runSeed(); toast('Đã nhập ' + rep.made.length + ' tài khoản'); viewLop(); return; }
-    if (a === 'lp-sess') { sessModal(cid, key); return; }
-    if (a === 'lp-ctab') { CTAB[cid] = t.getAttribute('data-t'); var p = location.hash.split('/'); viewClass(cid, p[4], CTAB[cid]); return; }
+    if (a === 'lp-sess') return sessModal(cid, key);
+    if (a === 'lp-stu') return stuModal(sid, ym);
+    if (a === 'lp-acc') return accModal(null);
+    if (a === 'lp-seen') { var sv = store.get('ln_seed_v', {}); sv.seen = true; store.set('ln_seed_v', sv); return refresh(); }
+    if (a === 'lp-copytxt') return copy(t.getAttribute('data-t'));
+    if (a === 'lp-addsess') return addSessModal(cid);
+    if (a === 'lp-addst') return addStuModal(cid);
     if (a === 'lp-cell') {
       var cd = cdata(cid), r = cd.att[key] = cd.att[key] || {}, v = r[sid], nv = v == null ? 1 : v === 1 ? 0 : v === 0 ? 2 : null;
       if (nv == null) delete r[sid]; else r[sid] = nv; saveCd(cid, cd);
       t.className = 'lp-c v' + (nv == null ? 'n' : nv); t.textContent = nv === 1 ? '1' : nv === 0 ? '0' : nv === 2 ? 'P' : '';
-      clearTimeout(LN._lpT); LN._lpT = setTimeout(function () { var y = window.scrollY, sx = (document.querySelector('.lp-gridw') || {}).scrollLeft; refresh(); window.scrollTo(0, y); var g = document.querySelector('.lp-gridw'); if (g && sx) g.scrollLeft = sx; }, 900); return;
+      clearTimeout(LN._lpT); LN._lpT = setTimeout(refresh, 900); return;
     }
-    if (SESS && (a === 'lp-mark' || a === 'lp-allp' || a === 'lp-off' || a === 'lp-unoff' || a === 'lp-move')) {
-      var c2 = SESS.cid, k2 = SESS.key, d2 = cdata(c2);
+    if (SESS && /^lp-(mark|allp|unoff|offform|offok|moveform|moveok|delsess)$/.test(a)) {
+      var c2 = SESS.cid, k2 = SESS.key, d2 = cdata(c2), sub = document.getElementById('lp-sub');
+      if (a === 'lp-offform') { sub.innerHTML = '<div class="lp-sub">' + field('of-r', 'Lý do (không bắt buộc)', '<input class="inp" id="of-r" placeholder="vd. Nghỉ lễ, cô bận">') + '<button class="btn btn-sm btn-pink" data-act="lp-offok">Xác nhận lớp nghỉ</button></div>'; return; }
+      if (a === 'lp-moveform') { sub.innerHTML = '<div class="lp-sub"><div class="two">' + field('mv-d', 'Ngày mới', '<input class="inp" type="date" id="mv-d" value="' + k2.split('@')[0] + '">') + field('mv-t', 'Giờ bắt đầu', '<input class="inp" type="time" id="mv-t" value="' + k2.split('@')[1] + '">') + '</div><button class="btn btn-sm btn-pink" data-act="lp-moveok">Dời buổi</button></div>'; return; }
       if (a === 'lp-mark') { d2.att[k2] = d2.att[k2] || {}; d2.att[k2][sid] = +t.getAttribute('data-v'); }
       if (a === 'lp-allp') { var cl2 = classes()[c2], dt = k2.split('@')[0]; d2.att[k2] = d2.att[k2] || {}; cl2.students.forEach(function (st) { if (K.activeOn(st, dt) && d2.att[k2][st.id] == null) d2.att[k2][st.id] = 1; }); }
-      if (a === 'lp-off') { var why = prompt('Lý do lớp nghỉ (vd. nghỉ lễ, cô bận):', 'Lớp nghỉ'); if (why == null) return; d2.off[k2] = why || 'Lớp nghỉ'; }
+      if (a === 'lp-offok') d2.off[k2] = (document.getElementById('of-r').value || '').trim() || 'Lớp nghỉ';
       if (a === 'lp-unoff') delete d2.off[k2];
-      if (a === 'lp-move') {
-        var nd = prompt('Dời sang ngày nào? (dạng ' + today() + ')', k2.split('@')[0]); if (!nd || !/^\d{4}-\d{2}-\d{2}$/.test(nd)) return;
-        var nt = prompt('Giờ bắt đầu (vd. 17:00)', k2.split('@')[1]); if (!nt || !/^\d{1,2}:\d{2}$/.test(nt)) return; if (nt.length === 4) nt = '0' + nt;
-        var cl3 = classes()[c2], sl = (cl3.slots || []).filter(function (s) { return s.start === k2.split('@')[1]; })[0];
-        var dur = sl ? K.hm(sl.end) - K.hm(sl.start) : 90, em = K.hm(nt) + dur, endT = String(Math.floor(em / 60)).padStart(2, '0') + ':' + String(em % 60).padStart(2, '0');
-        d2.off[k2] = 'Dời sang ' + dmyy(nd) + ' ' + nt; d2.extra[nd + '@' + nt] = { end: endT, note: 'Học bù buổi ' + dmyy(k2.split('@')[0]) };
-        saveCd(c2, d2); closeModal(); toast('Đã dời buổi'); refresh(); return;
+      if (a === 'lp-delsess') { if (!confirm('Xoá buổi thêm này (kèm điểm danh của buổi)?')) return; delete d2.extra[k2]; delete d2.att[k2]; delete d2.off[k2]; saveCd(c2, d2); closeModal(); toast('Đã xoá buổi'); refresh(); return; }
+      if (a === 'lp-moveok') {
+        var nd = document.getElementById('mv-d').value, nt = document.getElementById('mv-t').value; if (!nd || !nt) return;
+        var nk = nd + '@' + nt; if (nk === k2) { closeModal(); return; }
+        var cl3 = classes()[c2], s0 = K.sessions(cl3, d2, k2.split('@')[0], k2.split('@')[0]).filter(function (x) { return x.key === k2; })[0];
+        var dur = s0 && s0.end ? K.hm(s0.end) - K.hm(s0.start) : 90, em = K.hm(nt) + dur, endT = ('0' + Math.floor(em / 60)).slice(-2) + ':' + ('0' + em % 60).slice(-2);
+        if (d2.extra[k2]) delete d2.extra[k2]; else d2.off[k2] = 'Dời sang ' + dmyy(nd);
+        d2.extra[nk] = { end: endT, note: 'Dời từ ' + dmyy(k2.split('@')[0]) }; if (d2.att[k2]) { d2.att[nk] = d2.att[k2]; delete d2.att[k2]; }
+        saveCd(c2, d2); closeModal(); toast('Đã dời sang ' + dmyy(nd)); refresh(); return;
       }
-      saveCd(c2, d2); sessModal(c2, k2); var y2 = window.scrollY; refresh(); window.scrollTo(0, y2); sessModal(c2, k2); return;
+      saveCd(c2, d2); refresh(); sessModal(c2, k2); return;
     }
-    if (a === 'lp-extra') {
-      var dd = prompt('Ngày học bù / học thêm (dạng ' + today() + '):', today()); if (!dd || !/^\d{4}-\d{2}-\d{2}$/.test(dd)) return;
-      var tt = prompt('Giờ bắt đầu – kết thúc (vd. 17:00-18:30):', '17:00-18:30'); if (!tt) return; var m = tt.match(/(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})/); if (!m) { toast('Giờ chưa đúng dạng 17:00-18:30'); return; }
-      var d3 = cdata(cid), st0 = m[1].length === 4 ? '0' + m[1] : m[1]; d3.extra[dd + '@' + st0] = { end: m[2].length === 4 ? '0' + m[2] : m[2], note: 'Buổi học thêm' }; saveCd(cid, d3); toast('Đã thêm buổi ' + dmyy(dd)); refresh(); return;
+    if (DRAWER && /^lp-(dym|payform|delpay|resetpw|mkacc|leave|back)$/.test(a)) {
+      var D = DRAWER, x = stuOf(D.sid); if (!x) return;
+      if (a === 'lp-dym') return stuModal(D.sid, ym);
+      if (a === 'lp-payform') return payForm(D.sid, report(x.cl, x.st, D.ym).total);
+      if (a === 'lp-delpay') { if (!confirm('Xoá lần đóng tiền này?')) return; var P = pays(); P[D.sid] = (P[D.sid] || []).filter(function (p) { return p.id !== t.getAttribute('data-id'); }); store.set('ln_pay', P); refresh(); return stuModal(D.sid, D.ym); }
+      if (a === 'lp-resetpw') { var all = LN.users(); if (!all[x.st.user]) return; all[x.st.user].pass = LN.hash(x.st.user + ':123456'); store.set('ln_users', all); toast('Mật khẩu của ' + x.st.user + ' là 123456'); return; }
+      if (a === 'lp-mkacc') {
+        var base = uname(x.st.name), u = base, all2 = LN.users(); if (all2[u]) u = base + (x.cl.grade < 100 ? x.cl.grade : '2'); var i = 2; while (all2[u]) u = base + (i++);
+        u = prompt('Tên đăng nhập cho ' + x.st.name + ':', u); if (!u) return; u = uname(u);
+        if (!/^[a-z0-9_]{3,20}$/.test(u) || all2[u]) { toast('Tên không hợp lệ hoặc đã có.'); return; }
+        all2[u] = { name: x.st.name, grade: x.cl.grade, pass: LN.hash(u + ':123456'), mail: '', created: Date.now(), last: 0, status: 'active', byAdmin: true, cls: x.cl.id, joined: today() };
+        store.set('ln_users', all2); var c4 = classes()[x.cl.id]; c4.students.forEach(function (s) { if (s.id === D.sid) s.user = u; }); saveCls(c4); toast('Đã tạo ' + u + ' / 123456'); refresh(); return stuModal(D.sid, D.ym);
+      }
+      if (a === 'lp-leave' || a === 'lp-back') {
+        if (a === 'lp-leave' && !confirm('Cho ' + x.st.name + ' nghỉ học từ hôm nay? Lịch sử học và học phí vẫn được giữ.')) return;
+        var c5 = classes()[x.cl.id]; c5.students.forEach(function (s) { if (s.id === D.sid) { if (a === 'lp-leave') s.left = today(); else delete s.left; } }); saveCls(c5); refresh(); return stuModal(D.sid, D.ym);
+      }
     }
-    if (a === 'lp-close-month') {
-      var m2 = t.getAttribute('data-m'), cl4 = classes()[cid], d4 = cdata(cid), snap = {};
-      if (!confirm('Chốt học phí ' + ymTxt(m2) + ' của ' + cl4.name + '? Số buổi & số tiền tháng này sẽ được giữ cố định để báo cáo.')) return;
-      cl4.students.forEach(function (st) { var r = K.periods(cl4, d4, st, today(), m2).filter(function (x) { return x.id === m2; })[0]; snap[st.id] = { n: r ? r.n : 0, amount: r ? r.amount : 0 }; });
-      d4.closed[m2] = { at: Date.now(), snap: snap }; saveCd(cid, d4); toast('Đã chốt ' + ymTxt(m2)); refresh(); return;
-    }
-    if (a === 'lp-unclose') { if (!confirm('Mở chốt để sửa điểm danh tháng này?')) return; var d5 = cdata(cid); delete d5.closed[t.getAttribute('data-m')]; saveCd(cid, d5); refresh(); return; }
-    if (a === 'lp-addslot') { document.getElementById('lp-slots').insertAdjacentHTML('beforeend', slotRow()); return; }
-    if (a === 'lp-delslot') { t.closest('.lp-slot').remove(); return; }
-    if (a === 'lp-archive') { var c6 = classes()[cid]; c6.archived = !c6.archived; saveCls(c6); toast(c6.archived ? 'Đã lưu trữ lớp' : 'Đã bỏ lưu trữ'); LN.go('#/admin/lop'); return; }
+    if (a === 'lp-pay') { stuModal(sid, ym); var x2 = stuOf(sid); return payForm(sid, report(x2.cl, x2.st, ym || K.ymOf(today())).total); }
+    if (a === 'lp-onlydebt') { ONLY_DEBT = t.checked; return refresh(); }
+    if (a === 'lp-csv') return exportCsv(ym);
+    if (a === 'lp-print') return window.print();
+    if (a === 'lp-img') return saveImg(sid, ym);
+    if (a === 'lp-msg') return copy(msgText(sid, ym));
+    if (a === 'lp-addslot') return document.getElementById('lp-slots').insertAdjacentHTML('beforeend', slotRow());
+    if (a === 'lp-delslot') return t.closest('.lp-slot').remove();
+    if (a === 'lp-archive') { var c6 = classes()[cid]; c6.archived = !c6.archived; saveCls(c6); toast(c6.archived ? 'Đã lưu trữ lớp' : 'Đã bỏ lưu trữ'); return LN.go('#/admin'); }
     if (a === 'lp-newcls') {
       var nm = prompt('Tên lớp mới (vd. Lớp 6):'); if (!nm) return; var id = 'c' + Date.now().toString(36);
-      saveCls({ id: id, name: nm.trim(), grade: 4, color: '#FFB27A', price: 60000, billing: { mode: 'month', size: 5, dueDay: 5, grace: 0, when: 'after' }, slots: [], students: [], order: clsList(true).length, created: Date.now() });
-      CTAB[id] = 'set'; LN.go('#/admin/lop/' + id); return;
+      saveCls({ id: id, name: nm.trim(), grade: 4, color: '#FFB27A', price: 60000, billing: { mode: 'month', size: 5, dueDay: 5, grace: 3, when: 'after' }, slots: [], students: [], order: clsList(true).length, created: Date.now() });
+      return LN.go('#/admin/lop/' + id + '/set');
     }
-    if (a === 'lp-pay') { payModal(sid, t.getAttribute('data-amt')); return; }
-    if (a === 'lp-delpay') { if (!confirm('Xoá lần đóng tiền này?')) return; var P = pays(); P[sid] = (P[sid] || []).filter(function (p) { return p.id !== t.getAttribute('data-id'); }); store.set('ln_pay', P); refresh(); return; }
-    if (a === 'lp-msg') {
-      var tx = msgText(sid, t.getAttribute('data-m'));
-      modal('<h2>Tin nhắn gửi phụ huynh</h2><textarea class="inp" id="lp-msgt" rows="9" style="width:100%">' + esc(tx) + '</textarea><p style="margin-top:10px"><button class="btn btn-pink" data-act="lp-copy">📋 Sao chép để dán vào Zalo</button></p>'); return;
-    }
-    if (a === 'lp-copy') { var ta = document.getElementById('lp-msgt'); ta.select(); try { navigator.clipboard.writeText(ta.value).then(function () { toast('Đã sao chép'); }, function () { document.execCommand('copy'); toast('Đã sao chép'); }); } catch (e) { document.execCommand('copy'); toast('Đã sao chép'); } return; }
-    if (a === 'lp-hpf') { HPF = t.getAttribute('data-f'); refresh(); return; }
-    if (a === 'lp-csv') { exportCsv(t.getAttribute('data-m')); return; }
-    if (a === 'lp-leave') { if (!confirm('Cho bé nghỉ học từ hôm nay? Lịch sử học và học phí vẫn được giữ.')) return; var y = stuOf(sid), c7 = classes()[y.cl.id]; c7.students.forEach(function (s) { if (s.id === sid) s.left = today(); }); saveCls(c7); refresh(); return; }
   };
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });
-  window.addEventListener('hashchange', closeModal);
+  window.addEventListener('hashchange', function () { closeModal(); });
 
-  LN.lop = { viewLich: viewLich, viewLop: viewLop, viewClass: viewClass, viewHocPhi: viewHocPhi, viewStudent: viewStudent, runSeed: runSeed, ledgerOf: ledgerOf, stuOf: stuOf };
+  LN.lop = { viewHome: viewHome, viewClass: viewClass, viewHocPhi: viewHocPhi, viewPhieu: viewPhieu, viewSettings: viewSettings, runSeed: runSeed, report: report, stuOf: stuOf, msgText: msgText,
+    viewLich: viewHome, viewLop: viewHome, viewStudent: function (sid) { viewHome(); if (sid) stuModal(sid); } };
 })();

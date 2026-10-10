@@ -5,7 +5,7 @@
 (function () {
   var LN = window.LN, store = LN.store;
   var C = LN.cloud = { on: false, checked: false, boardList: null, state: 'idle' };
-  var SHARED = /^ln_(users|admin|teachers|class|att|fees|imports|grammar|grammar_del|grammar_v|classes|pay|seed_done|note_[a-z0-9_]{1,40}|cl_[a-z0-9_-]{1,40})$/, PROG = /^ln_prog_([a-z0-9_]{1,40})$/;
+  var SHARED = /^ln_(users|admin|teachers|class|att|fees|imports|grammar|grammar_del|grammar_v|classes|pay|bank|seed_done|seed_v|note_[a-z0-9_]{1,40}|cl_[a-z0-9_-]{1,40})$/, PROG = /^ln_prog_([a-z0-9_]{1,40})$/;
   var raw = { set: store.set, del: store.del }, QUIET = 0;
   function quiet(fn) { QUIET++; try { fn(); } finally { QUIET--; } }
   function same(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
@@ -125,14 +125,14 @@
   /* ---- Giáo viên ---- */
   C.alogin = function (user, hash) {
     return api('alogin', { user: user, hash: hash }).then(function (j) {
-      applyDump(j.data || {}, true); C.lastPull = Date.now();
+      applyDump(j.data || {}, true); C.lastPull = Date.now(); C.pulled = true;
       raw.set.call(store, 'ln_admin_session', { user: user, t: Date.now(), role: j.role, tok: j.token }); return j;
     });
   };
   C.pullAdmin = function () {
     var t = admTok(); if (!C.on || !t || Date.now() - (C.lastPull || 0) < 15000) return Promise.resolve(false);
     C.lastPull = Date.now();
-    return api('adump', { token: t }).then(function (j) { return applyDump(j.data || {}, false); }, function (e) { if (e.status === 401) raw.del.call(store, 'ln_admin_session'); return false; });
+    return api('adump', { token: t }).then(function (j) { C.pulled = true; return applyDump(j.data || {}, false); }, function (e) { C.pulled = true; if (e.status === 401) raw.del.call(store, 'ln_admin_session'); return false; });
   };
 
   /* ---- Khởi động: kiểm tra máy chủ, lấy dữ liệu mới nhất rồi mới hiện trang ---- */
@@ -163,7 +163,7 @@
       var s = store.get('ln_admin_session', null);
       if (s && !s.tok) raw.del.call(store, 'ln_admin_session'); // phiên cũ chưa có mã mạng → đăng nhập lại
       r0(parts);
-      C.pullAdmin().then(function (ch) { if (ch && location.hash.indexOf('#/admin') === 0) r0(parts); });
+      C.pullAdmin().then(function (ch) { if ((ch || LN._waitPull) && location.hash.indexOf('#/admin') === 0) { LN._waitPull = false; r0(parts); } });
     };
     LN.adminRoute._cloud = true;
   }

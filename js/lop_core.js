@@ -37,13 +37,20 @@
   }
   function monthSessions(cls, cd, ym) { var ds = monthDays(ym); return sessions(cls, cd, ds[0], ds[ds.length - 1]); }
   function activeOn(st, date) { return (!st.joined || date >= st.joined) && (!st.left || date <= st.left); }
-  function priceOf(cls, st) { return +(st && st.price) || +cls.price || 0; }
+  /* Giá mỗi buổi tại một ngày: giá riêng của bé > lịch sử đổi giá của lớp (áp dụng từ ngày) > giá lớp */
+  function priceOf(cls, st, date) {
+    if (st && +st.price) return +st.price;
+    var p = +cls.price || 0;
+    if (date && cls.prices && cls.prices.length) cls.prices.slice().sort(function (a, b) { return a.from < b.from ? -1 : 1; }).forEach(function (x) { if (x.from <= date) p = +x.price; });
+    else if (!date && cls.prices && cls.prices.length) p = +cls.prices.slice().sort(function (a, b) { return a.from < b.from ? -1 : 1; }).pop().price;
+    return p;
+  }
   function mark(cd, key, sid) { var r = cd && cd.att && cd.att[key]; return r && r[sid] != null ? r[sid] : null; }
   function firstMonth(cls) { var f = null; (cls.slots || []).forEach(function (s) { if (s.from && (!f || s.from < f)) f = s.from; }); (cls.students || []).forEach(function (s) { if (s.joined && (!f || s.joined < f)) f = s.joined; }); return ymOf(f || iso(new Date())); }
 
   /* Các khoản phải đóng của một học sinh (đến hết tháng `untilYm`) */
   function periods(cls, cd, st, today, untilYm) {
-    cd = cd || {}; var b = cls.billing || {}, price = priceOf(cls, st), out = [], ymNow = untilYm || ymOf(today);
+    cd = cd || {}; var b = cls.billing || {}, out = [], ymNow = untilYm || ymOf(today);
     if (b.mode === 'pack') {
       var size = Math.max(1, +b.size || 5), from = firstMonth(cls) + '-01', to = monthDays(ymNow).pop();
       var att = sessions(cls, cd, from, to).filter(function (s) { return !s.off && mark(cd, s.key, st.id) === 1; });
@@ -51,7 +58,8 @@
       chunks.forEach(function (ch, i) {
         var full = ch.length === size, before = b.when === 'before';
         if (!full && !before) return;
-        out.push({ id: 'P' + (i + 1), kind: 'pack', label: 'Gói ' + (i + 1) + ' (' + size + ' buổi)', n: before ? size : ch.length, amount: size * price,
+        var price = priceOf(cls, st, ch[0].date);
+        out.push({ id: 'P' + (i + 1), kind: 'pack', label: 'Gói ' + (i + 1) + ' (' + size + ' buổi)', n: before ? size : ch.length, amount: size * price, price: price,
           dates: ch.map(function (s) { return s.date; }), due: addDays(before ? ch[0].date : ch[ch.length - 1].date, +b.grace || 0), done: ch.length, size: size });
       });
       var rest = att.length % size; out.progress = { done: rest, size: size, next: rest ? null : null };
@@ -59,9 +67,10 @@
     }
     var ym = firstMonth(cls);
     while (ym <= ymNow) {
-      var snap = cd.closed && cd.closed[ym] && cd.closed[ym].snap && cd.closed[ym].snap[st.id], n = 0, dates = [];
-      monthSessions(cls, cd, ym).forEach(function (s) { if (!s.off && mark(cd, s.key, st.id) === 1) { n++; dates.push(s.date); } });
-      var amt = snap ? snap.amount : n * price;
+      var snap = cd.closed && cd.closed[ym] && cd.closed[ym].snap && cd.closed[ym].snap[st.id], n = 0, dates = [], sum = 0, price = 0;
+      monthSessions(cls, cd, ym).forEach(function (s) { if (!s.off && mark(cd, s.key, st.id) === 1) { n++; dates.push(s.date); price = priceOf(cls, st, s.date); sum += price; } });
+      if (!n) price = priceOf(cls, st, ym + '-28');
+      var amt = snap ? snap.amount : sum;
       if (snap) n = snap.n;
       if (n > 0 || amt > 0) out.push({ id: ym, kind: 'month', label: 'Tháng ' + (+ym.slice(5)) + '/' + ym.slice(0, 4), n: n, amount: amt, dates: dates, due: ymAdd(ym, 1) + '-' + pad(Math.min(28, +b.dueDay || 5)), closed: !!snap, price: price });
       ym = ymAdd(ym, 1);
@@ -79,7 +88,39 @@
     });
     return { rows: rows, paid: paid, billed: billed, debt: Math.max(0, billed - paid), credit: Math.max(0, paid - billed), overdue: rows.filter(function (r) { return r.status === 'overdue'; }).reduce(function (s, r) { return s + r.rem; }, 0), pays: pays };
   }
+  /* Phiếu báo tháng: học phí tháng này + nợ các kỳ trước (đã trừ tiền đóng, kỳ cũ trừ trước) */
+  function monthReport(cls, cd, st, pays, ym, today) {
+    var L = ledger(periods(cls, cd, st, today, ym), pays, today), pack = (cls.billing || {}).mode === 'pack';
+    var cur = L.rows.filter(function (r) { return pack ? ymOf(r.due) === ym : r.id === ym; });
+    var old = L.rows.filter(function (r) { return cur.indexOf(r) < 0 && r.rem > 0; });
+    var ss = monthSessions(cls, cd, ym).filter(function (s) { return activeOn(st, s.date); }).map(function (s) { return { date: s.date, start: s.start, off: s.off, v: s.off ? null : mark(cd, s.key, st.id) }; });
+    var c = { p: 0, a: 0, e: 0 }; ss.forEach(function (s) { if (s.v === 1) c.p++; else if (s.v === 0) c.a++; else if (s.v === 2) c.e++; });
+    var fee = cur.reduce(function (s, r) { return s + r.amount; }, 0), feePaid = cur.reduce(function (s, r) { return s + r.paid; }, 0), feeRem = cur.reduce(function (s, r) { return s + r.rem; }, 0);
+    var oldRem = old.reduce(function (s, r) { return s + r.rem; }, 0);
+    var due = cur[0] ? cur[0].due : (old[0] ? old[0].due : null);
+    return { ym: ym, sessions: ss, count: c, cur: cur, old: old, fee: fee, feePaid: feePaid, feeRem: feeRem, oldRem: oldRem, total: oldRem + feeRem, credit: L.credit, due: due, L: L,
+      price: cur[0] ? cur[0].price : priceOf(cls, st, ym + '-28'), progress: pack ? periods(cls, cd, st, today).progress : null };
+  }
+  /* Mã VietQR: thêm số tiền + nội dung chuyển khoản vào mã QR gốc của ngân hàng (chuẩn EMVCo/NAPAS) */
+  function crc16(s) { var c = 0xFFFF; for (var i = 0; i < s.length; i++) { c ^= s.charCodeAt(i) << 8; for (var j = 0; j < 8; j++) c = (c & 0x8000) ? ((c << 1) ^ 0x1021) & 0xFFFF : (c << 1) & 0xFFFF; } return ('000' + c.toString(16).toUpperCase()).slice(-4); }
+  function tlv(s) { var a = [], i = 0; while (i + 4 <= s.length) { var l = +s.substr(i + 2, 2); if (isNaN(l)) break; a.push([s.substr(i, 2), s.substr(i + 4, l)]); i += 4 + l; } return a; }
+  function fld(id, v) { return id + ('0' + v.length).slice(-2) + v; }
+  function asciiNote(t) { return String(t || '').replace(/Đ/g, 'D').replace(/đ/g, 'd').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 25); }
+  function qrValid(s) { s = String(s || '').trim(); return /^000201/.test(s) && s.length > 30 && crc16(s.slice(0, -4)) === s.slice(-4).toUpperCase(); }
+  function vietqr(base, amount, note) {
+    base = String(base || '').trim(); if (!qrValid(base)) return base;
+    amount = Math.round(+amount || 0); note = asciiNote(note);
+    var out = '';
+    tlv(base).forEach(function (x) {
+      if (x[0] === '54' || x[0] === '62' || x[0] === '63') return;
+      if (x[0] === '01' && amount > 0) x = ['01', '12'];
+      out += fld(x[0], x[1]);
+      if (x[0] === '53' && amount > 0) out += fld('54', String(amount));
+    });
+    if (note) out += fld('62', fld('08', note));
+    out += '6304'; return out + crc16(out);
+  }
   var API = { DOWS: DOWS, DOWS_S: DOWS_S, iso: iso, parse: parse, addDays: addDays, ymOf: ymOf, ymAdd: ymAdd, monthDays: monthDays, dow: dow, hm: hm, timeTxt: timeTxt,
-    sessions: sessions, monthSessions: monthSessions, activeOn: activeOn, priceOf: priceOf, mark: mark, periods: periods, ledger: ledger, firstMonth: firstMonth };
+    sessions: sessions, monthSessions: monthSessions, activeOn: activeOn, priceOf: priceOf, mark: mark, periods: periods, ledger: ledger, firstMonth: firstMonth, monthReport: monthReport, vietqr: vietqr, qrValid: qrValid, crc16: crc16, asciiNote: asciiNote };
   if (typeof module !== 'undefined' && module.exports) module.exports = API; else { root.LN = root.LN || {}; root.LN.lopCore = API; }
 })(this);

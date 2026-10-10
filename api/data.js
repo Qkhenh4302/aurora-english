@@ -7,7 +7,7 @@ const TOK = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKE
 const P = 'ae:';
 const OWNER = 'quyenntnna', OWNER_DEF_HASH = '2f121mm50j6';
 // Khoá dữ liệu chung của lớp (giáo viên ghi), dữ liệu công khai cho học sinh đọc
-const SHARED = /^ln_(users|admin|teachers|class|att|fees|imports|grammar|grammar_del|grammar_v|classes|pay|seed_done|note_[a-z0-9_]{1,40}|cl_[a-z0-9_-]{1,40})$/;
+const SHARED = /^ln_(users|admin|teachers|class|att|fees|imports|grammar|grammar_del|grammar_v|classes|pay|bank|seed_done|seed_v|note_[a-z0-9_]{1,40}|cl_[a-z0-9_-]{1,40})$/;
 const PUBLIC = ['ln_imports', 'ln_grammar', 'ln_grammar_del', 'ln_grammar_v'];
 
 async function redis(cmds) {
