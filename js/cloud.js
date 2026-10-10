@@ -5,7 +5,7 @@
 (function () {
   var LN = window.LN, store = LN.store;
   var C = LN.cloud = { on: false, checked: false, boardList: null, state: 'idle' };
-  var SHARED = /^ln_(users|admin|teachers|class|att|fees|imports|grammar|grammar_del|grammar_v|note_[a-z0-9_]{1,40})$/, PROG = /^ln_prog_([a-z0-9_]{1,40})$/;
+  var SHARED = /^ln_(users|admin|teachers|class|att|fees|imports|grammar|grammar_del|grammar_v|classes|pay|seed_done|note_[a-z0-9_]{1,40}|cl_[a-z0-9_-]{1,40})$/, PROG = /^ln_prog_([a-z0-9_]{1,40})$/;
   var raw = { set: store.set, del: store.del }, QUIET = 0;
   function quiet(fn) { QUIET++; try { fn(); } finally { QUIET--; } }
   function same(a, b) { return JSON.stringify(a) === JSON.stringify(b); }

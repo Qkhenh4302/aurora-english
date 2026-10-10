@@ -72,10 +72,12 @@
     var a = adm();
     function nl(id, href, icon, label) { return '<a href="' + href + '" class="' + (active === id ? 'on' : '') + '">' + ic(icon, 19) + label + '</a>'; }
     LN.render('<div class="adm"><aside class="aside"><a class="brand" href="#/admin">' + LN.logo(36) + '<span class="bname">Aurora <b>English</b></span></a>' +
-      '<span class="lb">Quản trị</span>' + nl('home', '#/admin', 'chart', 'Tổng quan lớp') + nl('roster', '#/admin/students', 'users', 'Sĩ số lớp') + nl('att', '#/admin/attendance', 'cal', 'Điểm danh') + nl('fees', '#/admin/fees', 'money', 'Học phí') + nl('grammar', '#/admin/grammar', 'book', 'Ngữ pháp tổng hợp') + nl('ai', '#/admin/ai', 'bot', 'Trợ lý AI Chíp') + nl('data', '#/admin/data', 'db', 'Dữ liệu & sao lưu') + nl('account', '#/admin/account', 'key', 'Tài khoản & giáo viên') +
+      '<span class="lb">Quản trị</span>' + nl('home', '#/admin', 'chart', 'Tổng quan lớp') + nl('roster', '#/admin/students', 'users', 'Sĩ số lớp') + nl('lich', '#/admin/lich', 'cal', 'Lịch & điểm danh') + nl('lop', '#/admin/lop', 'users', 'Lớp học') + nl('hocphi', '#/admin/hocphi', 'money', 'Học phí') + nl('grammar', '#/admin/grammar', 'book', 'Ngữ pháp tổng hợp') + nl('ai', '#/admin/ai', 'bot', 'Trợ lý AI Chíp') + nl('data', '#/admin/data', 'db', 'Dữ liệu & sao lưu') + nl('account', '#/admin/account', 'key', 'Tài khoản & giáo viên') +
       '<span class="lb">Khác</span><a href="#/">' + ic('eye', 19) + 'Mở trang học sinh</a><a href="#" data-act="a-logout">' + ic('out', 19) + 'Đăng xuất' + (cur() ? ' (' + esc(cur().user) + ')' : '') + '</a></aside>' +
       '<main class="amain">' + body + '</main></div>');
   }
+
+  LN.adminShell = shell;
 
   /* ================= Tạo admin / đăng nhập ================= */
   function viewLogin(err) {
@@ -737,8 +739,10 @@
       case 'data': viewData(); break;
       case 'ai': viewAI(); break;
       case 'students': viewRoster(); break;
-      case 'attendance': viewAttendance(p1); break;
-      case 'fees': viewFees(); break;
+      case 'attendance': case 'lich': if (LN.lop) LN.lop.viewLich(p1); else viewAttendance(p1); break;
+      case 'fees': case 'hocphi': if (LN.lop) LN.lop.viewHocPhi(p1); else viewFees(); break;
+      case 'lop': LN.lop && (p1 ? LN.lop.viewClass(p1, parts[2], parts[3]) : LN.lop.viewLop()); break;
+      case 'hs': LN.lop && LN.lop.viewStudent(p1); break;
       case 'account': viewAccount(); break;
       default: viewOverview();
     }
