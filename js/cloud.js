@@ -9,6 +9,32 @@
   var raw = { set: store.set, del: store.del }, QUIET = 0;
   function quiet(fn) { QUIET++; try { fn(); } finally { QUIET--; } }
   function same(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+  /* Gộp 3 chiều giống máy chủ (base = bản lấy về lần trước) */
+  function isObj(x) { return x && typeof x === 'object' && !Array.isArray(x); }
+  function kid(x) { return x.id != null ? 'i:' + x.id : 'u:' + x.user; }
+  function idArr(a) { return Array.isArray(a) && a.every(function (x) { return isObj(x) && (x.id != null || x.user != null); }); }
+  function merge3(b, l, r) {
+    if (same(l, b)) return r;
+    if (same(r, b) || same(l, r)) return l;
+    if (isObj(l) && isObj(r)) { var bb = isObj(b) ? b : {}, out = {}; Object.keys(r).concat(Object.keys(l).filter(function (k) { return !(k in r); })).forEach(function (k) { var v = merge3(bb[k], l[k], r[k]); if (v !== undefined) out[k] = v; }); return out; }
+    if (idArr(l) && idArr(r) && (l.length || r.length) && (b == null || idArr(b))) {
+      var m = function (a) { var o = {}; (a || []).forEach(function (x) { o[kid(x)] = x; }); return o; }, B = m(b), L = m(l), R = m(r), out2 = [];
+      r.map(kid).concat(l.map(kid).filter(function (id) { return !(id in R); })).forEach(function (id) { var v = merge3(B[id], L[id], R[id]); if (v !== undefined) out2.push(v); });
+      return out2;
+    }
+    return l;
+  }
+  function merge2(l, r) {
+    if (isObj(l) && isObj(r)) { var out = Object.assign({}, r); Object.keys(l).forEach(function (k) { out[k] = k in r ? merge2(l[k], r[k]) : l[k]; }); return out; }
+    return r === undefined ? l : r;
+  }
+  C.merge3 = merge3;
+  // bản gốc từng khoá = bản đã khớp với máy chủ lần gần nhất (để biết máy này đã sửa gì)
+  function bases() { return store.get('ln_cloud_base', {}) || {}; }
+  function setBases(o) { raw.set.call(store, 'ln_cloud_base', o); }
+  function hasAdm() { return !!store.get('ln_admin_session', null); }
+  // máy vừa lên bản mới (chưa có bản gốc): bỏ hàng đợi cũ của bản trước, lấy dữ liệu trên mạng làm chuẩn
+  if (store.get('ln_cloud_base', null) == null) { var q0 = store.get('ln_cloud_q', null); if (q0 && q0.keys) { q0.keys = {}; raw.set.call(store, 'ln_cloud_q', q0); } setBases({}); }
   function stuTok() { return store.get('ln_cloud_tok', null); }
   function admTok() { var s = store.get('ln_admin_session', null); return s && s.tok && Date.now() - s.t < 12 * 3600000 ? s.tok : null; }
   function api(op, body) {
@@ -27,9 +53,10 @@
   var timer = null;
   function schedule(ms) { clearTimeout(timer); timer = setTimeout(flush, ms == null ? 1500 : ms); }
   function onChange(k) {
-    if (QUIET || !C.on) return;
-    if (admTok() && (SHARED.test(k) || PROG.test(k))) { var q = Q(); q.keys[k] = 1; setQ(q); badge('wait'); schedule(); return; }
+    if (QUIET || (C.checked && !C.on)) return;
     var u = store.get('ln_session', null);
+    // máy có phiên giáo viên: xếp hàng gửi (kể cả khi phiên hết hạn – đăng nhập lại sẽ gửi tiếp, không bỏ)
+    if (hasAdm() && (SHARED.test(k) || (PROG.test(k) && k !== 'ln_prog_' + u))) { var q = Q(); q.keys[k] = 1; setQ(q); badge('wait'); schedule(); return; }
     if (stuTok() && u && k === 'ln_prog_' + u) { var q2 = Q(); q2.prog = true; setQ(q2); badge('wait'); schedule(3000); }
   }
   store.set = function (k, v) { raw.set.call(store, k, v); onChange(k); };
@@ -38,9 +65,29 @@
   function flush() {
     if (!C.on || flushing) return;
     var q = Q(), jobs = [], at = admTok(), st = stuTok(), u = store.get('ln_session', null);
-    var keys = Object.keys(q.keys);
-    if (keys.length && at) jobs.push(api('aput', { token: at, items: keys.map(function (k) { return { k: k, v: store.get(k, null) }; }) }).then(function () { var q3 = Q(); keys.forEach(function (k) { delete q3.keys[k]; }); setQ(q3); }));
-    else if (keys.length && !at) { q.keys = {}; setQ(q); }
+    var keys = Object.keys(q.keys).slice(0, 150);
+    if (keys.length && at) {
+      var B = bases(), sent = {};
+      var items = keys.map(function (k) { var v = store.get(k, null), it = { k: k, v: v }; sent[k] = JSON.stringify(v); if (k in B) it.b = B[k]; return it; });
+      jobs.push(api('aput', { token: at, items: items }).then(function (j) {
+        var fin = j.final || {}, q3 = Q(), B2 = bases(), changed = false;
+        quiet(function () {
+          keys.forEach(function (k) {
+            var now = store.get(k, null), stillSame = JSON.stringify(now) === sent[k];
+            if (k in fin) {
+              if (fin[k] == null) { delete B2[k]; } else {
+                B2[k] = fin[k];
+                if (stillSame) { if (!same(now, fin[k])) { raw.set.call(store, k, fin[k]); changed = true; } }
+                else { raw.set.call(store, k, merge3(JSON.parse(sent[k]), now, fin[k])); changed = true; }   // sửa thêm trong lúc đang gửi: gộp, gửi tiếp
+              }
+            }
+            if (stillSame) delete q3.keys[k];
+          });
+        });
+        setBases(B2); setQ(q3);
+        if (changed && LN._lpRefresh) LN._lpRefresh();
+      }, function (e) { if (e.status === 401) raw.del.call(store, 'ln_admin_session'); throw e; }));
+    }
     if (q.prog && st && u) {
       var p = store.get('ln_prog_' + u, null) || {};
       jobs.push(api('prog', { token: st, updated: p.updated || Date.now(), data: p, sum: LN.progSummary ? LN.progSummary(p) : {} }).then(function (j) {
@@ -48,13 +95,22 @@
         if (j.stale && j.prog && j.prog.data) quiet(function () { raw.set.call(store, 'ln_prog_' + u, j.prog.data); });
       }, function (e) { if (e.status === 401) { raw.del.call(store, 'ln_cloud_tok'); var q5 = Q(); q5.prog = false; setQ(q5); } throw e; }));
     }
-    if (!jobs.length) { badge('ok'); return; }
+    if (!jobs.length) { badge(keys.length ? 'login' : 'ok'); return; }
     flushing = true; badge('wait');
-    Promise.all(jobs).then(function () { flushing = false; badge('ok'); var q6 = Q(); if (Object.keys(q6.keys).length || q6.prog) schedule(500); },
-      function () { flushing = false; badge('err'); schedule(30000); });
+    Promise.all(jobs).then(function () { flushing = false; var q6 = Q(); if (Object.keys(q6.keys).length || q6.prog) schedule(300); else badge('ok'); },
+      function () { flushing = false; badge('err'); schedule(20000); });
   }
   C.flush = flush;
+  C.pending = function () { var q = Q(); return Object.keys(q.keys).length > 0 || q.prog; };
   window.addEventListener('online', function () { schedule(300); });
+  function refreshAdmin() {
+    if (!C.on || !admTok() || location.hash.indexOf('#/admin') !== 0 || Date.now() - (C.lastPull || 0) < 5000) return;
+    C.lastPull = 0;
+    C.pullAdmin().then(function (ch) { if (ch && !document.getElementById('lp-modal') && LN._lpRefresh) LN._lpRefresh(); });
+  }
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) refreshAdmin(); });
+  window.addEventListener('focus', refreshAdmin);
+  setInterval(function () { if (!document.hidden) refreshAdmin(); }, 60000);
   document.addEventListener('visibilitychange', function () { if (document.hidden) flush(); });
 
   /* ---- Biểu tượng trạng thái nhỏ ở góc màn hình ---- */
@@ -62,26 +118,28 @@
     C.state = s; var el = document.getElementById('cloudst');
     if (!el) { if (!document.body) return; el = document.createElement('div'); el.id = 'cloudst'; document.body.appendChild(el); }
     el.className = 'cloudst ' + s;
-    el.textContent = s === 'wait' ? '⏳ Đang lưu lên mạng…' : s === 'err' ? '⚠ Chưa lưu lên mạng – sẽ tự thử lại' : '☁️ Đã lưu lên mạng';
+    el.textContent = s === 'login' ? '⚠ Hết phiên – đăng nhập lại Khu giáo viên để lưu lên mạng' : s === 'wait' ? '⏳ Đang lưu lên mạng…' : s === 'err' ? '⚠ Chưa lưu lên mạng – sẽ tự thử lại' : '☁️ Đã lưu lên mạng';
     clearTimeout(badge.t); if (s === 'ok') badge.t = setTimeout(function () { el.className = 'cloudst hide'; }, 2200);
   }
 
   /* ---- Áp dữ liệu từ máy chủ vào máy ---- */
   function newer(a, b) { return ((a && a.updated) || 0) > ((b && b.updated) || 0); }
   function applyDump(d, firstLogin) {
-    var changed = false, q = Q(), push = [];
+    var changed = false, q = Q(), push = [], B = bases(), sk = d.keys || {};
     quiet(function () {
-      Object.keys(d.keys || {}).forEach(function (k) {
-        if (q.keys[k]) return; var v = d.keys[k];
-        if (v == null) return;
+      Object.keys(sk).forEach(function (k) {
+        if (q.keys[k]) return;               // máy này đang có thay đổi chưa gửi: giữ, lúc gửi máy chủ sẽ gộp
+        var v = sk[k]; if (v == null) return;
         var lv = store.get(k, null);
-        // lần đầu đăng nhập trên máy này: gộp thêm những mục chỉ có trên máy (vd. học sinh tạo trước khi bật lưu trên mạng)
-        if (firstLogin && k !== 'ln_admin' && lv && typeof lv === 'object' && !Array.isArray(lv) && typeof v === 'object' && !Array.isArray(v)) {
-          var mg = Object.assign({}, lv, v); if (!same(mg, v)) { v = mg; push.push(k); }
-        }
+        B[k] = sk[k];   // máy chưa có bản gốc: lấy đúng bản trên mạng (không làm sống lại dữ liệu cũ đã xoá)
         if (!same(lv, v)) { raw.set.call(store, k, v); changed = true; }
       });
-      if (firstLogin) store.keys().forEach(function (k) { if (SHARED.test(k) && !(k in (d.keys || {})) && store.get(k, null) != null) push.push(k); });
+      // khoá đã bị xoá trên mạng (máy này từng đồng bộ) → xoá ở máy này
+      var gone = Object.keys(B).filter(function (k) { return !(k in sk) && SHARED.test(k) && !q.keys[k]; });
+      if (!Object.keys(sk).length || gone.length > Math.max(3, Object.keys(B).length / 2)) gone = [];   // máy chủ trống hoặc mất nhiều dữ liệu: không xoá ở máy này
+      gone.forEach(function (k) { if (true) { delete B[k]; if (store.get(k, null) != null) { raw.del.call(store, k); changed = true; } } });
+      if (firstLogin) store.keys().forEach(function (k) { if (SHARED.test(k) && !(k in sk) && !(k in B) && store.get(k, null) != null) push.push(k); });
+      if (!Object.keys(sk).length) store.keys().forEach(function (k) { if (SHARED.test(k) && store.get(k, null) != null && push.indexOf(k) < 0) { delete B[k]; push.push(k); } });   // máy chủ trống: đưa dữ liệu của máy này lên lại
       var local = {}; store.keys().forEach(function (k) { var m = k.match(PROG); if (m) local[m[1]] = 1; });
       Object.keys(d.progs || {}).forEach(function (u) {
         var sv = d.progs[u], lv = store.get('ln_prog_' + u, null);
@@ -90,8 +148,8 @@
         else if (!same(lv, sv.data)) { raw.set.call(store, 'ln_prog_' + u, sv.data); changed = true; }
         delete local[u];
       });
-      if (firstLogin) Object.keys(local).forEach(function (u) { push.push('ln_prog_' + u); });
     });
+    setBases(B);
     if (push.length) { var q2 = Q(); push.forEach(function (k) { q2.keys[k] = 1; }); setQ(q2); schedule(200); }
     return changed;
   }
@@ -126,13 +184,13 @@
   C.alogin = function (user, hash) {
     return api('alogin', { user: user, hash: hash }).then(function (j) {
       applyDump(j.data || {}, true); C.lastPull = Date.now(); C.pulled = true;
-      raw.set.call(store, 'ln_admin_session', { user: user, t: Date.now(), role: j.role, tok: j.token }); return j;
+      raw.set.call(store, 'ln_admin_session', { user: user, t: Date.now(), role: j.role, tok: j.token }); C.pullFailed = false; schedule(300); return j;
     });
   };
   C.pullAdmin = function () {
     var t = admTok(); if (!C.on || !t || Date.now() - (C.lastPull || 0) < 15000) return Promise.resolve(false);
     C.lastPull = Date.now();
-    return api('adump', { token: t }).then(function (j) { C.pulled = true; return applyDump(j.data || {}, false); }, function (e) { C.pulled = true; if (e.status === 401) raw.del.call(store, 'ln_admin_session'); return false; });
+    return api('adump', { token: t }).then(function (j) { C.pulled = true; C.pullFailed = false; return applyDump(j.data || {}, false); }, function (e) { C.pullFailed = true; C.lastPull = 0; if (e.status === 401) raw.del.call(store, 'ln_admin_session'); return false; });
   };
 
   /* ---- Khởi động: kiểm tra máy chủ, lấy dữ liệu mới nhất rồi mới hiện trang ---- */

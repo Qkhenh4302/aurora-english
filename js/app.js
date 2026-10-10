@@ -9,7 +9,7 @@
       try { var v = localStorage.getItem(k); if (v != null) return JSON.parse(v); } catch (e) {}
       return k in mem ? JSON.parse(JSON.stringify(mem[k])) : d;
     },
-    set: function (k, v) { mem[k] = v; try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+    set: function (k, v) { mem[k] = v; try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { try { localStorage.removeItem(k); } catch (e2) {} if (!store._warned && k.indexOf('ln_') === 0) { store._warned = 1; setTimeout(function () { if (LN.toast) LN.toast('⚠ Bộ nhớ trình duyệt đã đầy – dữ liệu vẫn lưu lên mạng, nhưng cô nên xoá bớt dữ liệu web khác.'); }, 0); } } },
     del: function (k) { delete mem[k]; try { localStorage.removeItem(k); } catch (e) {} },
     keys: function () {
       var out = Object.keys(mem);

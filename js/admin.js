@@ -147,7 +147,7 @@
           return '<tr class="click" data-name="' + esc((s.u.name || '').toLowerCase()) + '" data-act="a-open" data-u="' + esc(s.un) + '"><td><b>' + esc(s.u.name) + '</b>' + (s.u.demo ? ' <span class="tag tag-yel">mẫu</span>' : '') + '</td>' +
             '<td class="small">' + esc(clsName(s.un)) + '</td><td>' + (s.units.length ? '<span class="bar thin"><i style="width:' + s.overall + '%"></i></span>' + s.overall + '% <span class="tiny muted">· ' + s.unitsDone + '/' + s.units.length + ' bài</span>' : '<span class="tiny muted">Học Ngữ pháp</span>') + '</td>' +
             '<td style="color:' + accCol(s.acc) + ';font-weight:800">' + (s.acc == null ? '—' : s.acc + '%') + '</td><td>' + s.mistakes.length + '</td><td>' + s.activeDays + '</td><td class="small muted">' + ago(s.last) + '</td>' +
-            (function () { var a = attOf(s.un, 30), f = feeStatus(s.un); return '<td>' + (a.e + a.a ? '<b style="color:var(--red-dk)">' + (a.e + a.a) + '</b>' : '0') + '</td><td>' + (f.owed ? '<span class="owed sm">' + money(f.owed) + '</span>' : '<span style="color:var(--mint-dk);font-weight:800">Đủ</span>') + '</td>'; })() +
+            (function () { var a = attOf(s.un, 30), f = feeStatus(s.un); return '<td>' + (a.a ? '<b style="color:var(--red-dk)">' + a.a + '</b>' : '0') + (a.e ? ' <span class="tiny muted">+' + a.e + ' phép</span>' : '') + '</td><td>' + (f.owed ? '<span class="owed sm">' + money(f.owed) + '</span>' : '<span style="color:var(--mint-dk);font-weight:800">Đủ</span>') + '</td>'; })() +
             '<td><a class="btn btn-sm" href="#/admin/report/' + encodeURIComponent(s.un) + '">' + ic('img', 16) + 'Phiếu tháng</a></td></tr>';
         }).join('') + '</tbody></table></div></div>' +
         '<div class="card"><h2>Cả lớp đang yếu phần nào</h2>' + (cls.length ? cls.slice(0, 8).map(function (x) { return '<div class="hbar"><span class="nm">' + esc(x.name) + '</span><span class="bar ' + barCls(x.acc) + '"><i style="width:' + x.acc + '%"></i></span><span class="v" style="color:' + accCol(x.acc) + '">' + x.acc + '%</span></div>'; }).join('') : '<p class="muted small">Chưa đủ dữ liệu.</p>') + '</div>'
@@ -318,8 +318,8 @@
         try {
           var obj = JSON.parse(rd.result); if (!obj || typeof obj !== 'object' || !obj.ln_users) throw new Error('bad');
           if (!confirm('Thay toàn bộ dữ liệu hiện tại bằng file "' + f.name + '"?')) return;
-          store.keys().forEach(function (k) { if (k !== 'ln_admin_session' && k !== 'ln_admin') store.del(k); });
-          Object.keys(obj).forEach(function (k) { if (k.indexOf('ln_') === 0 && k !== 'ln_admin_session' && k !== 'ln_session' && k !== 'ln_admin' && k !== 'ln_admin_fail' && k !== 'ln_teachers') store.set(k, obj[k]); });
+          store.keys().forEach(function (k) { if (k !== 'ln_admin_session' && k !== 'ln_admin' && k !== 'ln_session' && k !== 'ln_teachers' && k !== 'ln_admin_fail' && k.indexOf('ln_prog_') !== 0 && k.indexOf('ln_cloud') !== 0 && obj[k] === undefined) store.del(k); });
+          Object.keys(obj).forEach(function (k) { if (k.indexOf('ln_') === 0 && k.indexOf('ln_cloud') !== 0 && k !== 'ln_admin_session' && k !== 'ln_session' && k !== 'ln_admin' && k !== 'ln_admin_fail' && k !== 'ln_teachers') store.set(k, obj[k]); });
           toast('Đã khôi phục dữ liệu'); LN.route();
         } catch (e) { toast('File không đúng định dạng sao lưu của Aurora English.'); }
       };
@@ -420,7 +420,7 @@
   }
 
   /* ================= Lớp học: sĩ số, điểm danh, học phí ================= */
-  function money(n) { return (Math.round(n) || 0).toLocaleString('vi-VN') + ' đ'; }
+  function money(n) { return (Math.round(n) || 0).toLocaleString('vi-VN') + 'đ'; }
   LN.money = money;
   function klass() { return Object.assign({ name: 'Lớp tiếng Anh Aurora', fee: 600000, days: [2, 4, 6] }, store.get('ln_class', {})); }
   function ym(d) { d = d || new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
@@ -446,7 +446,7 @@
       var cl = C[cid], d = store.get('ln_cl_' + cid, null) || {}, att = d.att || {}, off = d.off || {}, um = {};
       (cl.students || []).forEach(function (st) { if (st.user) um[st.id] = st.user; });
       Object.keys(att).forEach(function (k) {
-        if (off[k] != null) return; var day = k.split('@')[0], r = att[k];
+        if (off[k] != null || !att[k]) return; var day = k.split('@')[0], r = att[k];
         Object.keys(r).forEach(function (sid) { var u = um[sid]; if (!u || r[sid] == null) return; (out[day] = out[day] || {})[u] = { s: r[sid] === 1 ? 'p' : r[sid] === 0 ? 'a' : 'e' }; });
       });
     });
@@ -454,7 +454,7 @@
   }
   function attOf(un, days) {
     var all = attAll(), since = days ? LN.dayKey(new Date(Date.now() - (days - 1) * 86400000)) : '0000', today = LN.dayKey(), r = { p: 0, l: 0, e: 0, a: 0, total: 0 };
-    Object.keys(all).forEach(function (d) { if (d < since || d > today) return; var x = all[d][un]; if (x && x.s) { r[x.s]++; r.total++; } });
+    Object.keys(all).forEach(function (d) { if (d < since || d > today) return; var x = all[d] && all[d][un]; if (x && x.s) { r[x.s]++; r.total++; } });
     r.present = r.p + r.l; return r;
   }
   LN.attOf = attOf;
@@ -763,7 +763,7 @@
   };
   LN.adminClick = function (a, t, ev) {
     var un = t.getAttribute('data-u');
-    if (a === 'a-logout') { ev.preventDefault(); store.del('ln_admin_session'); toast('Đã đăng xuất quản trị'); LN.go('#/'); }
+    if (a === 'a-logout') { ev.preventDefault(); if (LN.cloud && LN.cloud.on && LN.cloud.pending && LN.cloud.pending() && !confirm('Còn thay đổi chưa lưu lên mạng. Vẫn đăng xuất? (Bấm Huỷ, đợi vài giây cho chữ “Đã lưu lên mạng” hiện rồi hãy đăng xuất.)')) return; store.del('ln_admin_session'); toast('Đã đăng xuất quản trị'); LN.go('#/'); }
     else if (a === 'a-open') { if (ev.target.closest('a')) return; LN.go('#/admin/s/' + encodeURIComponent(un)); }
     else if (a === 'a-sort') { var k = t.getAttribute('data-k'); SORT = { k: k, d: SORT.k === k ? -SORT.d : (k === 'name' ? 1 : -1) }; viewOverview(); }
     else if (a === 'a-demo') { makeDemo(); toast('Đã tạo 4 học sinh mẫu'); if (location.hash === '#/admin') viewOverview(); else LN.go('#/admin'); }
@@ -829,7 +829,7 @@
       toast('Đã tải ảnh phiếu báo cáo');
     }
     else if (a === 'a-export') {
-      var obj = {}; store.keys().forEach(function (k) { if (k !== 'ln_admin_session' && k !== 'ln_session' && k !== 'ln_admin' && k !== 'ln_admin_fail' && k !== 'ln_teachers') obj[k] = store.get(k); });
+      var obj = {}; store.keys().forEach(function (k) { if (k.indexOf('ln_cloud') !== 0 && k !== 'ln_admin_session' && k !== 'ln_session' && k !== 'ln_admin' && k !== 'ln_admin_fail' && k !== 'ln_teachers') obj[k] = store.get(k); });
       var url = URL.createObjectURL(new Blob([JSON.stringify(obj, null, 1)], { type: 'application/json' }));
       var l2 = document.createElement('a'); l2.href = url; l2.download = 'AuroraEnglish_saoluu_' + LN.dayKey() + '.json'; document.body.appendChild(l2); l2.click(); l2.remove(); setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
       toast('Đã tải file sao lưu');

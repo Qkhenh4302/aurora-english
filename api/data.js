@@ -10,6 +10,34 @@ const OWNER = 'quyenntnna', OWNER_DEF_HASH = '2f121mm50j6';
 const SHARED = /^ln_(users|admin|teachers|class|att|fees|imports|grammar|grammar_del|grammar_v|classes|pay|bank|seed_done|seed_v|note_[a-z0-9_]{1,40}|cl_[a-z0-9_-]{1,40})$/;
 const PUBLIC = ['ln_imports', 'ln_grammar', 'ln_grammar_del', 'ln_grammar_v'];
 
+/* Gộp 3 chiều: base = bản máy đã lấy về lần trước, local = bản máy gửi lên, remote = bản đang có trên mạng.
+   Hai máy sửa chỗ khác nhau thì giữ cả hai; cùng sửa một chỗ thì bản mới gửi lên thắng.
+   Mảng các mục có id (ví dụ các lần đóng tiền, học sinh) được gộp theo id, xoá ở một máy vẫn được giữ là xoá. */
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const isObj = (x) => x && typeof x === 'object' && !Array.isArray(x);
+const kid = (x) => (x.id != null ? 'i:' + x.id : 'u:' + x.user);
+const idArr = (a) => Array.isArray(a) && a.every((x) => isObj(x) && (x.id != null || x.user != null));
+function merge3(b, l, r) {
+  if (same(l, b)) return r;
+  if (same(r, b) || same(l, r)) return l;
+  if (isObj(l) && isObj(r)) {
+    const bb = isObj(b) ? b : {}, out = {}, keys = Object.keys(r).concat(Object.keys(l).filter((k) => !(k in r)));
+    for (const k of keys) { const v = merge3(bb[k], l[k], r[k]); if (v !== undefined) out[k] = v; }
+    return out;
+  }
+  if (idArr(l) && idArr(r) && (l.length || r.length) && (b == null || idArr(b))) {
+    const m = (a) => { const o = {}; (a || []).forEach((x) => { o[kid(x)] = x; }); return o; };
+    const B = m(b), L = m(l), R = m(r), ids = r.map(kid).concat(l.map(kid).filter((id) => !(id in R))), out = [];
+    for (const id of ids) { const v = merge3(B[id], L[id], R[id]); if (v !== undefined) out.push(v); }
+    return out;
+  }
+  return l;
+}
+// Chưa có bản gốc (máy cũ chưa đồng bộ theo cách mới): chỉ thêm mục chỉ máy này có, còn lại giữ bản trên mạng
+function merge2(l, r) {
+  if (isObj(l) && isObj(r)) { const out = Object.assign({}, r); for (const k of Object.keys(l)) out[k] = k in r ? merge2(l[k], r[k]) : l[k]; return out; }
+  return r === undefined ? l : r;   // danh sách và giá trị trùng: giữ bản trên mạng   // trùng nhau: giữ bản trên mạng (máy cũ chưa có bản gốc không được ghi đè)
+}
 async function redis(cmds) {
   const r = await fetch(URL_.replace(/\/$/, '') + '/pipeline', { method: 'POST', headers: { Authorization: 'Bearer ' + TOK, 'Content-Type': 'application/json' }, body: JSON.stringify(cmds) });
   if (!r.ok) throw new Error('redis ' + r.status + ' ' + (await r.text()).slice(0, 200));
@@ -117,18 +145,44 @@ const OPS = {
   // Giáo viên lưu một mục dữ liệu (tài khoản, điểm danh, học phí, nhận xét, tiến độ học sinh…)
   async aput(b) {
     const s = await session(b.token); if (!s || s.role === 'student') return [401, { error: 'session' }];
-    const items = Array.isArray(b.items) ? b.items.slice(0, 200) : [], cmds = [];
-    for (const it of items) {
-      const k = String(it.k || ''), del = it.v == null, v = del ? null : JSON.stringify(it.v);
-      if (v && v.length > 900000) continue;
-      if ((k === 'ln_admin' || k === 'ln_teachers') && s.role !== 'owner') continue;
-      if (SHARED.test(k)) { cmds.push(del ? ['DEL', P + 'k:' + k] : ['SET', P + 'k:' + k, v]); cmds.push(del ? ['SREM', P + 'keys', k] : ['SADD', P + 'keys', k]); }
-      else { const m = k.match(/^ln_prog_([a-z0-9_]{1,40})$/); if (!m) continue;
-        if (del) cmds.push(['DEL', P + 'p:' + m[1]], ['SREM', P + 'plist', m[1]], ['HDEL', P + 'sum', m[1]]);
-        else cmds.push(['SET', P + 'p:' + m[1], JSON.stringify({ updated: +((it.v || {}).updated) || Date.now(), data: it.v })], ['SADD', P + 'plist', m[1]]); }
+    const items = (Array.isArray(b.items) ? b.items.slice(0, 200) : []).filter((it) => {
+      const k = String(it.k || '');
+      if ((k === 'ln_admin' || k === 'ln_teachers') && s.role !== 'owner') return false;
+      return SHARED.test(k) || /^ln_prog_[a-z0-9_]{1,40}$/.test(k);
+    });
+    if (!items.length) return [200, { ok: true, n: 0, final: {} }];
+    const lockKeys = items.map((it) => P + 'lock:' + it.k), lockId = tokenNew();
+    for (let tries = 0; tries < 40; tries++) {   // giữ khoá các mục đang ghi (tối đa 5 giây) để 2 máy lưu cùng lúc không đè nhau
+      const got = await redis(lockKeys.map((k) => ['SET', k, lockId, 'NX', 'PX', '5000']));
+      const failed = lockKeys.filter((k, i) => got[i] !== 'OK');
+      if (!failed.length) break;
+      await redis(lockKeys.filter((k, i) => got[i] === 'OK').map((k) => ['DEL', k]));
+      if (tries === 39) return [503, { error: 'busy' }];
+      await new Promise((ok) => setTimeout(ok, 120 + Math.random() * 150));
     }
+    try {
+    const cur = await redis(items.map((it) => ['GET', SHARED.test(it.k) ? P + 'k:' + it.k : P + 'p:' + it.k.slice(8)]));
+    const cmds = [], final = {};
+    items.forEach((it, i) => {
+      const k = String(it.k), del = it.v == null;
+      if (SHARED.test(k)) {
+        const remote = J(cur[i], undefined);
+        if (del) { cmds.push(['DEL', P + 'k:' + k], ['SREM', P + 'keys', k]); final[k] = null; return; }
+        let v = it.v;
+        if (remote !== undefined && remote !== null && k !== 'ln_admin') v = ('b' in it) && it.b != null ? merge3(it.b, it.v, remote) : merge2(it.v, remote);
+        const str = JSON.stringify(v); if (str.length > 900000) return;
+        cmds.push(['SET', P + 'k:' + k, str], ['SADD', P + 'keys', k]); final[k] = v;
+      } else {
+        const u = k.slice(8), old = J(cur[i], null);
+        if (del) { cmds.push(['DEL', P + 'p:' + u], ['SREM', P + 'plist', u], ['HDEL', P + 'sum', u]); return; }
+        const up = +((it.v || {}).updated) || 0;
+        if (old && (+old.updated || 0) > up) return;   // không ghi đè tiến độ mới hơn của học sinh
+        cmds.push(['SET', P + 'p:' + u, JSON.stringify({ updated: up || Date.now(), data: it.v })], ['SADD', P + 'plist', u]);
+      }
+    });
     if (cmds.length) await redis(cmds);
-    return [200, { ok: true, n: cmds.length }];
+    return [200, { ok: true, n: cmds.length, final }];
+    } finally { await redis(lockKeys.map((k) => ['DEL', k])).catch(() => {}); }
   }
 };
 
