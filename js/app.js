@@ -442,8 +442,25 @@
   if (window.UNITS2) SETS[2] = buildUnitsG(window.UNITS2, 2);
   if (window.UNITS3) SETS[3] = buildUnitsG(window.UNITS3, 3);
   Object.keys(SETS).forEach(function (g) { SETS[g].forEach(function (u) { u.art = 'u' + g + '-' + u.n; }); });
-  if (window.UNITSE1) { SETS[101] = buildUnitsG(window.UNITSE1, 101); var EUART = ['u3-8', 'u3-9', 'u4-4', 'u3-11', 'u3-19', 'u3-20', 'u3-4', 'u3-17']; SETS[101].forEach(function (u) { u.art = EUART[u.n - 1]; }); }
-  if (window.UNITSE2) { SETS[102] = buildUnitsG(window.UNITSE2, 102); var E2ART = ['e2-happy', 'e2-hospital', 'e2-spaghetti', 'e2-t-shirt', 'e2-play-the-guitar', 'e2-living-room', 'e2-one-o-clock', 'e2-social-studies']; SETS[102].forEach(function (u) { u.art = E2ART[u.n - 1]; }); }
+  function regCourses() {
+    if (window.UNITSE1 && !SETS[101]) { SETS[101] = buildUnitsG(window.UNITSE1, 101); var EUART = ['u3-8', 'u3-9', 'u4-4', 'u3-11', 'u3-19', 'u3-20', 'u3-4', 'u3-17']; SETS[101].forEach(function (u) { u.art = EUART[u.n - 1]; }); }
+    if (window.UNITSE2 && !SETS[102]) { SETS[102] = buildUnitsG(window.UNITSE2, 102); var E2ART = ['e2-happy', 'e2-hospital', 'e2-spaghetti', 'e2-t-shirt', 'e2-play-the-guitar', 'e2-living-room', 'e2-one-o-clock', 'e2-social-studies']; SETS[102].forEach(function (u) { u.art = E2ART[u.n - 1]; }); }
+  }
+  regCourses();
+  /* Bản web: dữ liệu khoá nặng (Everybody Up) chỉ tải khi cần */
+  var LAZY = window.LN_LAZY || {}, LOADING = {};
+  LN.needLoad = function (g) { return !SETS[+g] && !!LAZY[+g]; };
+  LN.loadGrade = function (g) {
+    g = +g; if (!LN.needLoad(g)) return Promise.resolve();
+    if (LOADING[g]) return LOADING[g];
+    LOADING[g] = new Promise(function (ok, bad) {
+      var s = document.createElement('script'); s.src = LAZY[g]; s.async = true;
+      s.onload = function () { regCourses(); ok(); }; s.onerror = function () { delete LOADING[g]; bad(new Error(LAZY[g])); };
+      document.head.appendChild(s);
+    });
+    return LOADING[g];
+  };
+  LN.loadAll = function () { return Promise.all(Object.keys(LAZY).map(function (g) { return LN.loadGrade(g); })); };
   /* Khoá học: lớp 1–12 theo SGK, 101 = Everybody Up 1, 102 = Everybody Up 2 */
   var COURSES = LN.COURSES = [[101, 'Everybody Up 1'], [102, 'Everybody Up 2']];
   var gname = LN.gradeName = function (g) { g = +g; for (var i = 0; i < COURSES.length; i++) if (COURSES[i][0] === g) return COURSES[i][1]; return 'Lớp ' + g; };
@@ -597,7 +614,7 @@
     return p;
   };
   function prog() { var u = me(); return progOf(u ? u.username : '_'); }
-  function saveProg(p) { var u = me(); if (u) { store.set('ln_prog_' + u.username, p); var all = users(); if (all[u.username]) { all[u.username].last = Date.now(); store.set('ln_users', all); } } }
+  function saveProg(p) { var u = me(); if (u) { p.updated = Date.now(); store.set('ln_prog_' + u.username, p); var all = users(); if (all[u.username]) { all[u.username].last = Date.now(); store.set('ln_users', all); } } }
   LN.saveProgOf = function (username, p) { store.set('ln_prog_' + username, p); };
 
   var unitSteps = LN.unitSteps = function (u, p) {
@@ -735,7 +752,7 @@
       '<button class="ibtn sm" data-act="logout" aria-label="Thoát" title="Thoát">' + cic('out', 24) + '</button></div></div></header>';
   }
   LN.header = header;
-  function footer() { return '<footer class="foot"><div class="wrap"><span>' + logo(22) + ' <b>Aurora English</b> · Tiếng Anh lớp 1–12 · Dữ liệu lưu trong trình duyệt này</span><a href="#/admin">Giáo viên đăng nhập</a></div></footer>'; }
+  function footer() { return '<footer class="foot"><div class="wrap"><span>' + logo(22) + ' <b>Aurora English</b> · Tiếng Anh lớp 1–12 · ' + (LN.cloud && LN.cloud.on ? '☁️ Dữ liệu được lưu trên mạng' : 'Dữ liệu lưu trong trình duyệt này') + '</span><a href="#/admin">Giáo viên đăng nhập</a></div></footer>'; }
 
   LN.footer = footer;
   /* ================= Trang giới thiệu ================= */
@@ -818,6 +835,12 @@
         else if (!d.get('ok')) authErr = 'Cần phụ huynh đánh dấu đồng ý.';
         if (authErr) { viewAuth('register'); return; }
         all[user] = { name: name, grade: +d.get('grade'), pass: LN.hash(user + ':' + pass), mail: mail, created: Date.now(), last: Date.now() };
+        if (LN.cloud && LN.cloud.on) {
+          var fb = f.querySelector('button[type=submit]'); fb.disabled = true; fb.textContent = 'Đang tạo tài khoản…';
+          LN.cloud.register(user, all[user]).then(function () { store.set('ln_session', user); toast('Đã tạo tài khoản “' + user + '”. Nhớ tên đăng nhập này nhé!'); var dd = pendingRoute || '#/home'; pendingRoute = null; go(dd); },
+            function (e) { authErr = e.message === 'taken' ? 'Tên “' + esc(user) + '” đã có người dùng. Chọn tên khác nhé.' : esc(e.status ? e.message : 'Không kết nối được máy chủ. Kiểm tra mạng rồi thử lại.'); viewAuth('register'); });
+          return;
+        }
         store.set('ln_users', all); store.set('ln_session', user);
         var saved = users()[user];
         if (!saved || saved.pass !== LN.hash(user + ':' + pass)) toast('Lưu ý: trình duyệt chưa lưu được tài khoản.');
@@ -825,6 +848,17 @@
         var dest = pendingRoute || '#/home'; pendingRoute = null; go(dest);
       } else {
         var u2 = normUser(d.get('user')), p2 = String(d.get('pass') || '');
+        if (u2 && p2 && LN.cloud && LN.cloud.on) {
+          var lb = f.querySelector('button[type=submit]'); lb.disabled = true; lb.textContent = 'Đang đăng nhập…';
+          LN.cloud.login(u2, LN.hash(u2 + ':' + p2), LN.hash(u2 + ':' + p2.trim())).then(function () {
+            store.set('ln_session', u2); var dd2 = pendingRoute || '#/home'; pendingRoute = null; go(dd2);
+          }, function (e) {
+            if (!e.status && all[u2] && passOk(all[u2], u2, p2)) { store.set('ln_session', u2); toast('Đang học không có mạng – tiến độ sẽ tự lưu lên khi có mạng lại.'); go(pendingRoute || '#/home'); pendingRoute = null; return; }
+            authErr = e.message === 'notfound' ? 'Không tìm thấy tài khoản “' + esc(u2) + '”. Kiểm tra lại tên đăng nhập (chữ thường, không dấu) hoặc hỏi giáo viên.' : e.message === 'badpass' ? 'Mật khẩu chưa đúng. Kiểm tra Caps Lock, bấm 👁 để xem lại, hoặc nhờ giáo viên cấp lại.' : esc(e.status ? e.message : 'Không kết nối được máy chủ. Kiểm tra mạng rồi thử lại.');
+            viewAuth('login'); var lu2 = document.getElementById('l-user'); if (lu2) lu2.value = u2;
+          });
+          return;
+        }
         if (!u2 || !p2) authErr = 'Nhập tên đăng nhập và mật khẩu nhé.';
         else if (!all[u2]) authErr = 'Không tìm thấy tài khoản “' + esc(u2) + '” trên trình duyệt này.' + (Object.keys(all).length ? '' : ' (Trình duyệt này chưa có tài khoản nào — tài khoản chỉ lưu ở máy và trình duyệt đã đăng ký.)');
         else if (!passOk(all[u2], u2, p2)) authErr = 'Mật khẩu chưa đúng. Kiểm tra Caps Lock, bấm 👁 để xem lại, hoặc nhờ giáo viên cấp lại.';
@@ -851,7 +885,7 @@
       ev.preventDefault(); var d = new FormData(ev.target), all = users(), name = String(d.get('name') || '').trim(), mail = String(d.get('mail') || '').trim();
       if (!name) { accMsg = { t: 'Nhập tên của bé.' }; viewAccount(); return; }
       if (normContact(mail).length < 6) { accMsg = { t: 'Nhập email hoặc số điện thoại phụ huynh.' }; viewAccount(); return; }
-      all[u.username].name = name; all[u.username].mail = mail; store.set('ln_users', all); accMsg = { ok: true, t: 'Đã lưu thông tin.' }; viewAccount();
+      all[u.username].name = name; all[u.username].mail = mail; store.set('ln_users', all); if (LN.cloud) LN.cloud.profile(name, mail); accMsg = { ok: true, t: 'Đã lưu thông tin.' }; viewAccount();
     });
   }
 
@@ -931,7 +965,14 @@
     return '<div class="card wday"><div class="chead"><h2>' + cic('book2', 28) + ' Từ vựng của ngày</h2><span class="small muted">Unit ' + w.u.n + '</span></div><div class="wd-in"><div class="wd-pic">' + picHtml(w.v[2], 'lg') + '</div><div class="wd-t"><p class="wd-en">' + esc(w.v[0]) + ' ' + sayBtn(w.v[0], 'sm') + '</p><p class="wd-vi">' + esc(w.v[1]) + '</p>' +
       (ex ? '<div class="wd-ex">' + sayBtn(ex[0] + ' ' + ex[1], 'sm') + '<span><b>' + esc(ex[0]) + '</b><br>' + esc(ex[1]) + '</span></div>' : '') + '</div></div><a class="btn btn-sm btn-block" href="#/game/cards/' + w.u.n + '">🃏 Ôn thẻ từ Unit ' + w.u.n + '</a></div>';
   }
+  LN.progSummary = function (p) { var tot = 0; UNITS.forEach(function (x) { tot += unitStat(x, progOf2(p)).pct; }); return { stars: p.stars || 0, streak: streak(progOf2(p)), prog: UNITS.length ? tot / 100 / UNITS.length : 0 }; };
+  function progOf2(p) { p = p || {}; ['seen', 'ex', 'mistakes', 'days', 'topics', 'games', 'vlearn'].forEach(function (k) { p[k] = p[k] || {}; }); return p; }
   var board = LN.board = function () {
+    var C = LN.cloud, mu = me();
+    if (C && C.on && C.boardList && mu) {
+      var mine = LN.progSummary(prog()), L = C.boardList.filter(function (x) { return x.un !== mu.username; }).concat([{ un: mu.username, name: mu.name, stars: mine.stars, streak: mine.streak, prog: mine.prog }]);
+      return L.sort(function (a, b) { return b.stars - a.stars || b.streak - a.streak || String(a.name).localeCompare(String(b.name), 'vi'); });
+    }
     var all = users();
     var mg = (me() || {}).grade;
     return Object.keys(all).filter(function (un) { return all[un].status !== 'stopped' && (!mg || +all[un].grade === +mg); }).map(function (un) {
@@ -1714,6 +1755,14 @@
     [].slice.call(document.querySelectorAll('.confetti,.burst,.cdown,.combo,.floater,.ptc')).forEach(function (x) { x.remove(); });
     if (parts0() !== 'game') { var gb = document.getElementById('gbg'); if (gb) gb.remove(); document.body.removeAttribute('data-gcat'); }
     var h = location.hash.replace(/^#/, '') || '/', parts = h.split('/').filter(Boolean), u = me();
+    var needG = parts[0] === 'admin' ? Object.keys(LAZY).filter(function (g) { return LN.needLoad(g); }) : u && LN.needLoad(u.grade) ? [u.grade] : [];
+    if (needG.length) {
+      render('<main class="wrap page" style="text-align:center;padding-top:80px">' + chick(120, 'wow') + '<h2 class="sub" style="margin-top:16px">Chíp đang tải bài học…</h2><p class="muted">Lần đầu hơi lâu một chút, những lần sau sẽ nhanh hơn.</p></main>');
+      Promise.all(needG.map(function (g) { return LN.loadGrade(g); })).then(route, function (e) {
+        render('<main class="wrap page" style="text-align:center;padding-top:80px">' + chick(120, 'sad') + '<h2 class="sub" style="margin-top:16px">Chưa tải được bài học</h2><p class="muted">Kiểm tra mạng rồi bấm tải lại nhé. (' + esc(e.message) + ')</p><p><button class="btn btn-pink" onclick="location.reload()">Tải lại</button></p></main>');
+      });
+      return;
+    }
     if (u && parts[0] !== 'admin') LN.useGrade(u.grade);
     if (parts[0] === 'admin') { G = null; S = null; LN.useGrade(4); LN.adminRoute(parts.slice(1)); return; }
     var open = parts.length === 0 || parts[0] === 'auth';
@@ -1767,7 +1816,7 @@
       if (a === 'retry') { viewPlay(S.id); return; }
       if (a === 'clearbuild') { S.built = []; drawPlay(); return; }
     }
-    if (a === 'logout') { store.del('ln_session'); S = null; G = null; go('#/'); toast('Đã thoát. Hẹn gặp lại!'); }
+    if (a === 'logout') { if (LN.cloud) { LN.cloud.flush(); LN.cloud.logout(); } store.del('ln_session'); S = null; G = null; go('#/'); toast('Đã thoát. Hẹn gặp lại!'); }
     else if (a === 'sound') { var sn = !settings().sound; setSetting('sound', sn); var bs = document.querySelector('[data-act=sound]'); if (bs) { bs.classList.toggle('on', sn); bs.innerHTML = cic(sn ? 'sound' : 'mute', 24); bs.setAttribute('aria-pressed', sn); } toast(sn ? 'Đã bật âm thanh đúng / sai' : 'Đã tắt âm thanh đúng / sai'); if (sn) sfx.ok(); }
     else if (a === 'chest') { var pc = prog(); pc.chest = pc.chest || {}; if (!pc.chest[dayKey()]) { pc.chest[dayKey()] = true; pc.stars += 10; saveProg(pc); sfx.win(); confetti(); burst(true, '+10 ⭐ Rương quà!'); setTimeout(route, 900); } }
     else if (a === 'setgrade') { var all = users(), me2 = store.get('ln_session'); all[me2].grade = 4; store.set('ln_users', all); route(); }

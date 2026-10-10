@@ -86,6 +86,12 @@
       '<button class="btn btn-lg btn-pink btn-block" type="submit"' + (locked ? ' disabled' : '') + '>Đăng nhập</button></form><p class="small muted" style="margin-top:14px;text-align:center"><a href="#/">← Về trang học sinh</a></p></div></main>');
     document.getElementById('f-alog').addEventListener('submit', function (ev) {
       ev.preventDefault(); var d = new FormData(ev.target), user = String(d.get('user') || '').trim().toLowerCase(), pw = String(d.get('pass') || '');
+      if (LN.cloud && LN.cloud.on && user && pw) {
+        var sb = ev.target.querySelector('button[type=submit]'); sb.disabled = true; sb.textContent = 'Đang đăng nhập…';
+        LN.cloud.alogin(user, LN.hash('admin:' + user + ':' + pw)).then(function () { store.del('ln_admin_fail'); var c0 = cur(); if (c0 && c0.must) { viewForceChange(); return; } LN.route(); },
+          function (e) { viewLogin(e.status === 401 ? 'Sai tên đăng nhập hoặc mật khẩu.' : e.status === 429 ? e.message : 'Không kết nối được máy chủ (' + esc(e.message) + '). Kiểm tra mạng rồi thử lại.'); });
+        return;
+      }
       var a = adm().user === user ? adm() : teachers().filter(function (x) { return x.user === user; })[0] || { user: '', pass: '' };
       var lk = store.get('ln_admin_fail', { n: 0, until: 0 });
       if (lk.until > Date.now()) return viewLogin('Đăng nhập sai nhiều lần. Thử lại sau ' + Math.ceil((lk.until - Date.now()) / 1000) + ' giây.');
@@ -126,7 +132,7 @@
     var agg = {}; list.forEach(function (s) { s.topics.forEach(function (t) { agg[t.id] = agg[t.id] || [0, 0, t.name]; agg[t.id][0] += t.r; agg[t.id][1] += t.n; }); });
     var cls = Object.keys(agg).map(function (k) { return { name: agg[k][2], acc: pct(agg[k][0], agg[k][1]), n: agg[k][1] }; }).filter(function (x) { return x.n >= 5; }).sort(function (a, b) { return a.acc - b.acc; });
     function th(k, label) { return '<th><button data-act="a-sort" data-k="' + k + '">' + label + (SORT.k === k ? (SORT.d > 0 ? ' ▲' : ' ▼') : '') + '</button></th>'; }
-    var body = '<div class="chead"><div><h1>Tổng quan lớp</h1><p class="muted">Số liệu lấy từ các tài khoản học sinh trên trình duyệt này.</p></div>' + (list.length ? '' : '<button class="btn btn-yel" data-act="a-demo">Tạo dữ liệu mẫu để xem thử</button>') + '</div>' +
+    var body = '<div class="chead"><div><h1>Tổng quan lớp</h1><p class="muted">' + (LN.cloud && LN.cloud.on ? '☁️ Số liệu đồng bộ từ mọi máy học sinh đăng nhập (tự cập nhật).' : 'Số liệu lấy từ các tài khoản học sinh trên trình duyệt này.') + '</p></div>' + (list.length ? '' : '<button class="btn btn-yel" data-act="a-demo">Tạo dữ liệu mẫu để xem thử</button>') + '</div>' +
       '<div class="row" style="margin:16px 0 18px">' +
       '<div class="stat"><p class="k">Học sinh</p><p class="v">' + list.length + '</p></div>' +
       '<div class="stat"><p class="k">Có học trong 7 ngày</p><p class="v">' + act + '</p></div>' +
@@ -298,7 +304,7 @@
   function viewData() {
     var keys = store.keys(), size = 0; keys.forEach(function (k) { size += JSON.stringify(store.get(k)).length; });
     var demo = Object.keys(LN.users()).filter(function (u) { return LN.users()[u].demo; }).length;
-    shell('data', '<h1 style="margin-bottom:6px">Dữ liệu & sao lưu</h1><p class="muted" style="margin-bottom:18px">Bản demo lưu mọi thứ trong trình duyệt này (' + Object.keys(LN.users()).length + ' học sinh, khoảng ' + Math.round(size / 1024) + ' KB). Xoá dữ liệu trình duyệt là mất — nên sao lưu thường xuyên.</p>' +
+    shell('data', '<h1 style="margin-bottom:6px">Dữ liệu & sao lưu</h1><p class="muted" style="margin-bottom:18px">' + (LN.cloud && LN.cloud.on ? '☁️ Dữ liệu đang được <b>lưu trên mạng</b> và đồng bộ mọi máy; máy này giữ thêm một bản sao. ' : 'Bản demo lưu mọi thứ trong trình duyệt này. ') + '(' + Object.keys(LN.users()).length + ' học sinh, khoảng ' + Math.round(size / 1024) + ' KB). Xoá dữ liệu trình duyệt là mất — nên sao lưu thường xuyên.</p>' +
       '<div class="row"><div class="card grow"><h2>Sao lưu</h2><p class="muted small" style="margin-bottom:14px">Tải toàn bộ tài khoản, tiến độ, nhận xét và Ngữ pháp tổng hợp về một file .json.</p><button class="btn btn-pink" data-act="a-export">' + ic('down', 18) + 'Tải file sao lưu</button>' +
       '<h2 style="margin-top:24px">Khôi phục</h2><p class="muted small" style="margin-bottom:10px">Chọn file sao lưu để nạp lại. Dữ liệu hiện tại sẽ bị thay thế.</p><label class="btn" for="a-import">' + ic('up', 18) + 'Chọn file sao lưu…</label><input type="file" id="a-import" accept=".json,application/json" class="sr-only"></div>' +
       '<div class="card side"><h2>Dữ liệu mẫu</h2><p class="muted small" style="margin-bottom:14px">Tạo 4 học sinh mẫu có tiến độ khác nhau để xem thử báo cáo. Có nhãn "mẫu", xoá được bất kỳ lúc nào.</p>' +

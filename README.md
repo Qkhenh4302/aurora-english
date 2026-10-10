@@ -37,4 +37,11 @@ mỗi phút/ngày; khi hết lượt, app tự quay về cách chấm phát âm 
 - **Hỏi Chíp** (mục mới trên thanh menu): trò chuyện tiếng Anh bằng chữ hoặc giọng nói, theo chủ đề Unit đang học.
 - **Làm bài sai**: nút **🤖 Hỏi Chíp vì sao?** giải thích dễ hiểu kèm ví dụ.
 
-Lưu ý: tài khoản và tiến độ học vẫn lưu trong trình duyệt của từng máy (như bản cũ).
+## Bật lưu dữ liệu chung trên mạng (tài khoản, tiến độ, điểm danh, học phí)
+1. Vercel → mở dự án → tab **Storage** → **Create Database** (hoặc **Browse Marketplace**).
+2. Chọn **Upstash** → **Upstash for Redis** → **Continue**. Chọn vùng gần Việt Nam (**Singapore**), gói **Free** → **Create**.
+3. Ở bước **Connect Project**: chọn dự án Aurora English → **Connect**. Vercel tự thêm biến `KV_REST_API_URL`, `KV_REST_API_TOKEN`.
+4. **Deployments** → ⋯ → **Redeploy**.
+5. Mở trang → **Khu giáo viên** → đăng nhập. Lần đầu, dữ liệu đang có trên máy cô sẽ tự được đưa lên mạng.
+
+Khi chưa bật bước này, app vẫn chạy như cũ (chỉ lưu trên từng máy).
