@@ -438,11 +438,11 @@
   }
   var SETS = LN.UNITSETS = { 4: UNITS.slice() }, CURG = 4;
   UNITS.forEach(function (u) { u.grade = 4; });
-  if (window.UNITS1) SETS[1] = buildUnitsG(window.UNITS1, 1);
-  if (window.UNITS2) SETS[2] = buildUnitsG(window.UNITS2, 2);
-  if (window.UNITS3) SETS[3] = buildUnitsG(window.UNITS3, 3);
-  Object.keys(SETS).forEach(function (g) { SETS[g].forEach(function (u) { u.art = 'u' + g + '-' + u.n; }); });
+  SETS[4].forEach(function (u) { u.art = 'u4-' + u.n; });
+  function regGS() { [1, 2, 3].forEach(function (g) { var L = window['UNITS' + g]; if (L && !SETS[g] && (g !== 2 || (window.IMG1 && window.IMG3))) { SETS[g] = buildUnitsG(L, g); SETS[g].forEach(function (u) { u.art = 'u' + g + '-' + u.n; }); } }); }
+  regGS();
   function regCourses() {
+    regGS();
     if (window.UNITSE1 && !SETS[101]) { SETS[101] = buildUnitsG(window.UNITSE1, 101); var EUART = ['u3-8', 'u3-9', 'u4-4', 'u3-11', 'u3-19', 'u3-20', 'u3-4', 'u3-17']; SETS[101].forEach(function (u) { u.art = EUART[u.n - 1]; }); }
     if (window.UNITSE2 && !SETS[102]) { SETS[102] = buildUnitsG(window.UNITSE2, 102); var E2ART = ['e2-happy', 'e2-hospital', 'e2-spaghetti', 'e2-t-shirt', 'e2-play-the-guitar', 'e2-living-room', 'e2-one-o-clock', 'e2-social-studies']; SETS[102].forEach(function (u) { u.art = E2ART[u.n - 1]; }); }
   }
@@ -453,17 +453,20 @@
   LN.loadGrade = function (g) {
     g = +g; if (!LN.needLoad(g)) return Promise.resolve();
     if (LOADING[g]) return LOADING[g];
-    LOADING[g] = new Promise(function (ok, bad) {
-      var s = document.createElement('script'); s.src = LAZY[g]; s.async = true;
-      s.onload = function () { regCourses(); ok(); }; s.onerror = function () { delete LOADING[g]; bad(new Error(LAZY[g])); };
-      document.head.appendChild(s);
-    });
+    var files = [].concat(LAZY[g]);
+    LOADING[g] = files.reduce(function (pr, src) {
+      return pr.then(function () {
+        if (document.querySelector('script[data-lz="' + src + '"]')) return LN._lz[src];
+        LN._lz = LN._lz || {};
+        return (LN._lz[src] = new Promise(function (ok, bad) { var s = document.createElement('script'); s.src = src; s.async = false; s.setAttribute('data-lz', src); s.onload = ok; s.onerror = function () { bad(new Error(src.split('?')[0])); }; document.head.appendChild(s); }));
+      });
+    }, Promise.resolve()).then(function () { regCourses(); }, function (e) { delete LOADING[g]; throw e; });
     return LOADING[g];
   };
   LN.loadAll = function () { return Promise.all(Object.keys(LAZY).map(function (g) { return LN.loadGrade(g); })); };
   /* Khoá học: lớp 1–12 theo SGK, 101 = Everybody Up 1, 102 = Everybody Up 2 */
   var COURSES = LN.COURSES = [[101, 'Everybody Up 1'], [102, 'Everybody Up 2']];
-  var gname = LN.gradeName = function (g) { g = +g; for (var i = 0; i < COURSES.length; i++) if (COURSES[i][0] === g) return COURSES[i][1]; return 'Lớp ' + g; };
+  var courseName = LN.gradeName = function (g) { g = +g; for (var i = 0; i < COURSES.length; i++) if (COURSES[i][0] === g) return COURSES[i][1]; return 'Lớp ' + g; };
   LN.gradeOpts = function (sel) { sel = +sel || 4; var o = function (g, l) { return '<option value="' + g + '"' + (g === sel ? ' selected' : '') + '>' + l + '</option>'; }; return '<optgroup label="Tiểu học">' + [1, 2, 3, 4, 5].map(function (g) { return o(g, 'Lớp ' + g); }).join('') + '</optgroup><optgroup label="THCS">' + [6, 7, 8, 9].map(function (g) { return o(g, 'Lớp ' + g); }).join('') + '</optgroup><optgroup label="THPT">' + [10, 11, 12].map(function (g) { return o(g, 'Lớp ' + g); }).join('') + '</optgroup><optgroup label="Khoá học riêng">' + COURSES.map(function (c) { return o(c[0], c[1]); }).join('') + '</optgroup>'; };
   var AUDURL = {};
   LN.audUrl = function (k) { if (AUDURL[k]) return AUDURL[k]; var b = (window.AUDE || {})[k]; if (!b) return ''; try { var bin = atob(b), arr = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i); AUDURL[k] = URL.createObjectURL(new Blob([arr], { type: 'audio/mpeg' })); } catch (e) { AUDURL[k] = 'data:audio/mpeg;base64,' + b; } return AUDURL[k]; };
@@ -758,7 +761,7 @@
   /* ================= Trang giới thiệu ================= */
   function viewLanding() {
     var C = [[1, 'Lớp 1', 'Global Success'], [2, 'Lớp 2', 'Global Success'], [3, 'Lớp 3', 'Global Success'], [4, 'Lớp 4', 'Global Success'], [101, 'Everybody Up 1', 'Oxford'], [102, 'Everybody Up 2', 'Oxford']];
-    var NU = { 101: 8, 102: 8 }, COL = ['#FF5C9A', '#FF8A3D', '#2EC4A0', '#3A9BFF', '#8B5CF6', '#E23E7D'];
+    var NU = { 1: 16, 2: 16, 3: 20, 101: 8, 102: 8 }, COL = ['#FF5C9A', '#FF8A3D', '#2EC4A0', '#3A9BFF', '#8B5CF6', '#E23E7D'];
     var chips = C.filter(function (c) { return SETS[c[0]] || NU[c[0]]; }).map(function (c, i) { var n = SETS[c[0]] ? SETS[c[0]].length : NU[c[0]]; return '<div class="crs" style="--c:' + COL[i % COL.length] + '"><b>' + c[1] + '</b><span>' + c[2] + ' · ' + n + ' Unit</span></div>'; }).join('');
     render(header() +
       '<main><section class="hero"><div class="wrap"><div style="flex:999 1 440px;min-width:0">' +
@@ -878,7 +881,7 @@
     render(header('account') + '<main class="wrap page" style="max-width:880px"><h1 class="title" style="margin-bottom:16px">Tài khoản của bé</h1>' +
       (msg ? '<div class="' + (msg.ok ? 'note note-mint' : 'ferr') + '" style="margin-bottom:14px" role="status">' + esc(msg.t) + '</div>' : '') +
       '<div class="row" style="align-items:flex-start"><section class="card grow"><h2>Thông tin</h2><form id="f-info" novalidate>' +
-      '<p class="small muted" style="margin-bottom:12px">Tên đăng nhập: <b style="color:var(--ink)">' + esc(u.username) + '</b> · ' + esc(gname(u.grade)) + '</p>' +
+      '<p class="small muted" style="margin-bottom:12px">Tên đăng nhập: <b style="color:var(--ink)">' + esc(u.username) + '</b> · ' + esc(courseName(u.grade)) + '</p>' +
       '<div class="field"><label for="ac-name">Tên của bé</label><input class="inp" id="ac-name" name="name" value="' + esc(u.name) + '"></div>' +
       '<div class="field"><label for="ac-mail">Email / số điện thoại phụ huynh</label><input class="inp" id="ac-mail" name="mail" value="' + esc(u.mail || '') + '"></div>' +
       '<button class="btn btn-pink" type="submit">Lưu thông tin</button></form></section>' +
@@ -1087,7 +1090,7 @@
         nodes.push('<a class="pnode rev' + (b ? ' done' : '') + '" style="--x:' + OFFS[k++ % 8] + 'px" href="#/play/' + r.id + '"><span class="dot">🎁' + (b ? '<span class="ok">' + ic('check', 15, '#fff', 3.5) + '</span>' : '') + '</span><span class="lab"><span class="u">' + r.title + '</span><br><span class="n">Unit ' + r.from + '–' + r.to + '</span>' + (b ? '<br>' + stars(starsFor(b.best)) : '') + '</span></a>');
       });
     });
-    render(header('learn') + '<main class="wrap page"><div class="chead"><div><h1 class="title">Con đường học ' + (CURG > 100 ? gname(CURG) : 'lớp ' + CURG) + '</h1><p class="muted">Đã xong ' + dn + ' / ' + UNITS.length + ' Unit · bấm vào một Unit để học</p></div>' +
+    render(header('learn') + '<main class="wrap page"><div class="chead"><div><h1 class="title">Con đường học ' + (CURG > 100 ? courseName(CURG) : 'lớp ' + CURG) + '</h1><p class="muted">Đã xong ' + dn + ' / ' + UNITS.length + ' Unit · bấm vào một Unit để học</p></div>' +
       '<div style="width:260px;max-width:100%"><div class="bar"><i style="width:' + pct(dn, UNITS.length) + '%"></i></div></div></div><div class="path">' + nodes.join('') + '</div></main>' + footer());
   }
 

@@ -73,7 +73,13 @@
     quiet(function () {
       Object.keys(d.keys || {}).forEach(function (k) {
         if (q.keys[k]) return; var v = d.keys[k];
-        if (v == null) return; if (!same(store.get(k, null), v)) { raw.set.call(store, k, v); changed = true; }
+        if (v == null) return;
+        var lv = store.get(k, null);
+        // lần đầu đăng nhập trên máy này: gộp thêm những mục chỉ có trên máy (vd. học sinh tạo trước khi bật lưu trên mạng)
+        if (firstLogin && k !== 'ln_admin' && lv && typeof lv === 'object' && !Array.isArray(lv) && typeof v === 'object' && !Array.isArray(v)) {
+          var mg = Object.assign({}, lv, v); if (!same(mg, v)) { v = mg; push.push(k); }
+        }
+        if (!same(lv, v)) { raw.set.call(store, k, v); changed = true; }
       });
       if (firstLogin) store.keys().forEach(function (k) { if (SHARED.test(k) && !(k in (d.keys || {})) && store.get(k, null) != null) push.push(k); });
       var local = {}; store.keys().forEach(function (k) { var m = k.match(PROG); if (m) local[m[1]] = 1; });

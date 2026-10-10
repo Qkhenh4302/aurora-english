@@ -1494,6 +1494,37 @@ img.art.cic { height: auto; flex: none; }
 .cloudst.err{border-color:#FF4F6D;color:#b3243f}.cloudst.wait{border-color:#FFD23F}.cloudst.hide{opacity:0;pointer-events:none}
 
 .crss{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}@media(max-width:700px){.crss{grid-template-columns:repeat(2,minmax(0,1fr))}}.crs{background:#fff;border:2px solid var(--line,#F3E6EC);border-left:8px solid var(--c);border-radius:18px;padding:12px 14px;display:flex;flex-direction:column;gap:2px}.crs b{font-family:Mali,sans-serif;font-size:19px;color:var(--c)}.crs span{font-size:13px;color:#75606F;font-weight:700}
+/* ===== Tối ưu điện thoại ===== */
+html { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%; }
+a, button, .opt, .wchip, label, select { touch-action: manipulation; }
+@media (max-width: 760px) {
+  .topbar { backdrop-filter: none; background: #fff; }
+  .topbar .wrap { flex-wrap: nowrap; min-height: 58px; padding-top: 4px; padding-bottom: 4px; }
+  .topbar .tr { gap: 5px; padding: 4px 0; }
+  .topbar .ibtn.sm { width: 38px; height: 38px; }
+  /* thanh menu dưới đáy như ứng dụng */
+  .topbar .nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; order: 0; flex-basis: auto; display: flex; flex-wrap: nowrap; justify-content: space-around; gap: 0;
+    background: #fff; border-top: 2px solid var(--line); padding: 5px 4px calc(5px + env(safe-area-inset-bottom)); box-shadow: 0 -6px 18px rgba(59, 42, 58, .08); }
+  .topbar .nav a { flex: 1 1 0; min-width: 0; flex-direction: column; gap: 1px; padding: 4px 2px; border-radius: 12px; position: relative; }
+  .topbar .nav a span { display: block !important; font-size: 10.5px; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .topbar .nav a .cnt { position: absolute; top: 0; right: 14%; font-size: 10px; padding: 0 5px; }
+  .topbar .nav a img.art.cic { width: 26px; height: 26px; }
+  body { padding-bottom: calc(66px + env(safe-area-inset-bottom)); }
+  .cloudst { bottom: calc(74px + env(safe-area-inset-bottom)); }
+  /* trang làm bài: câu hỏi lên trước, danh sách bài gọn lại xuống dưới */
+  .playgrid .tasks { order: 2; padding: 10px; }
+  .tk-h, .tk-f { display: none; }
+  .tk { flex: 0 0 168px; }
+  /* khu giáo viên: menu thành dải cuộn ngang */
+  .aside { flex-wrap: nowrap; overflow-x: auto; padding: 10px; gap: 6px; -webkit-overflow-scrolling: touch; }
+  .aside .lb { display: none; }
+  .aside a { flex: none; white-space: nowrap; padding: 8px 12px; }
+  .aside .brand { flex: none; padding: 0 6px 0 0; }
+  .aside .brand .bname { display: none; }
+}
+@media (max-width: 420px) { .topbar .bname { display: none; } .pillstat { padding: 3px 7px; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
+@media (max-width: 760px) { .face { padding-bottom: 40px; } .face .hint { bottom: 10px; font-size: 12px; } .face .fcimg, .face img.art { max-height: 46%; width: auto; } }
 
 /* ===================== Đại chiến quái vật (monster) ===================== */
 .monster-wrap { max-width: 820px; }
@@ -1840,25 +1871,20 @@ img.art.cic { height: auto; flex: none; }
 </style>
 </head>
 <body>
-<div id="app"><p style="padding:40px;font-family:sans-serif">Đang tải Aurora English… (lần đầu có thể mất vài giây)</p></div><script>window.LN_LAZY={"101": "js/units_eu1.js?v=f7682d75", "102": "js/units_eu2.js?v=1e979802"};window.__lnErr=function(s){var a=document.getElementById("app");if(a&&!window.__lnOk)a.innerHTML="<p style=\"padding:40px;font-family:sans-serif\">Không tải được tệp: "+String(s).split("/").pop()+"<br>Kiểm tra mạng rồi bấm F5 để tải lại.</p>";};window.addEventListener("error",function(e){if(!window.__lnOk&&e&&e.message)__lnErr("lỗi: "+e.message);});</script>
+<div id="app"><p style="padding:40px;font-family:sans-serif">Đang tải Aurora English… (lần đầu có thể mất vài giây)</p></div><script>window.LN_LAZY={"1": ["js/units1.js?v=1729eee9"], "2": ["js/units1.js?v=1729eee9", "js/units3.js?v=dbd39687", "js/units2.js?v=60e7f633"], "3": ["js/units3.js?v=dbd39687"], "101": ["js/art_eu1.js?v=dc79dec9", "js/units_eu1.js?v=f7682d75"], "102": ["js/art_eu2.js?v=84a963e1", "js/units_eu2.js?v=1e979802"]};window.__lnErr=function(s){var a=document.getElementById("app");if(a&&!window.__lnOk)a.innerHTML="<p style=\"padding:40px;font-family:sans-serif\">Không tải được tệp: "+String(s).split("/").pop()+"<br>Kiểm tra mạng rồi bấm F5 để tải lại.</p>";};window.addEventListener("error",function(e){if(!window.__lnOk&&e&&e.message)__lnErr("lỗi: "+e.message);});</script>
 <noscript><p style="padding:40px">Trang này cần bật JavaScript.</p></noscript>
 <script src="js/data.js?v=986158f1" onerror="__lnErr(this.src)"></script>
 <script src="js/units4.js?v=87455823" onerror="__lnErr(this.src)"></script>
-<script src="js/units1.js?v=1729eee9" onerror="__lnErr(this.src)"></script>
-<script src="js/units2.js?v=60e7f633" onerror="__lnErr(this.src)"></script>
-<script src="js/units3.js?v=dbd39687" onerror="__lnErr(this.src)"></script>
 <script src="js/grammar_data.js?v=73e60e5a" onerror="__lnErr(this.src)"></script>
 <script src="js/explain4.js?v=fbce3e67" onerror="__lnErr(this.src)"></script>
 <script src="js/art.js?v=bbf5baf7" onerror="__lnErr(this.src)"></script>
-<script src="js/art_eu1.js?v=dc79dec9" onerror="__lnErr(this.src)"></script>
-<script src="js/art_eu2.js?v=84a963e1" onerror="__lnErr(this.src)"></script>
-<script src="js/app.js?v=08598bb9" onerror="__lnErr(this.src)"></script>
+<script src="js/app.js?v=36e8c9cb" onerror="__lnErr(this.src)"></script>
 <script src="js/games.js?v=034fd0d0" onerror="__lnErr(this.src)"></script>
 <script src="js/games_a.js?v=fee8a804" onerror="__lnErr(this.src)"></script>
 <script src="js/games_b.js?v=e92d6ae3" onerror="__lnErr(this.src)"></script>
 <script src="js/ai_prompts.js?v=888af3f0" onerror="__lnErr(this.src)"></script>
 <script src="js/ai.js?v=2a2d5128" onerror="__lnErr(this.src)"></script>
-<script src="js/cloud.js?v=c6ad058f" onerror="__lnErr(this.src)"></script>
+<script src="js/cloud.js?v=9979b800" onerror="__lnErr(this.src)"></script>
 <script src="js/importer.js?v=61229f68" onerror="__lnErr(this.src)"></script>
 <script src="js/admin.js?v=b809bf0a" onerror="__lnErr(this.src)"></script>
 <script>
