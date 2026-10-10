@@ -752,25 +752,29 @@
       '<button class="ibtn sm" data-act="logout" aria-label="Thoát" title="Thoát">' + cic('out', 24) + '</button></div></div></header>';
   }
   LN.header = header;
-  function footer() { return '<footer class="foot"><div class="wrap"><span>' + logo(22) + ' <b>Aurora English</b> · Tiếng Anh lớp 1–12 · ' + (LN.cloud && LN.cloud.on ? '☁️ Dữ liệu được lưu trên mạng' : 'Dữ liệu lưu trong trình duyệt này') + '</span><a href="#/admin">Giáo viên đăng nhập</a></div></footer>'; }
+  function footer() { return '<footer class="foot"><div class="wrap"><span>' + logo(22) + ' <b>Aurora English</b> · Tiếng Anh · Global Success &amp; Everybody Up · ' + (LN.cloud && LN.cloud.on ? '☁️ Dữ liệu được lưu trên mạng' : 'Dữ liệu lưu trong trình duyệt này') + '</span><a href="#/admin">Giáo viên đăng nhập</a></div></footer>'; }
 
   LN.footer = footer;
   /* ================= Trang giới thiệu ================= */
   function viewLanding() {
+    var C = [[1, 'Lớp 1', 'Global Success'], [2, 'Lớp 2', 'Global Success'], [3, 'Lớp 3', 'Global Success'], [4, 'Lớp 4', 'Global Success'], [101, 'Everybody Up 1', 'Oxford'], [102, 'Everybody Up 2', 'Oxford']];
+    var NU = { 101: 8, 102: 8 }, COL = ['#FF5C9A', '#FF8A3D', '#2EC4A0', '#3A9BFF', '#8B5CF6', '#E23E7D'];
+    var chips = C.filter(function (c) { return SETS[c[0]] || NU[c[0]]; }).map(function (c, i) { var n = SETS[c[0]] ? SETS[c[0]].length : NU[c[0]]; return '<div class="crs" style="--c:' + COL[i % COL.length] + '"><b>' + c[1] + '</b><span>' + c[2] + ' · ' + n + ' Unit</span></div>'; }).join('');
     render(header() +
       '<main><section class="hero"><div class="wrap"><div style="flex:999 1 440px;min-width:0">' +
-      '<span class="tag tag-pink" style="font-size:14px">Tiếng Anh lớp 4 · Global Success</span>' +
+      '<span class="tag tag-pink" style="font-size:14px">Tiếng Anh · Global Success & Everybody Up</span>' +
       '<h1>Aurora English<br><em>học vui như chơi</em></h1>' +
-      '<p class="lead">Bài học bám sát sách giáo khoa Global Success (Lớp 1, 2, 3, 4). Mỗi bài có từ vựng, mẫu câu, bài luyện có giải thích, cùng hơn 20 trò chơi và Ngữ pháp tổng hợp chi tiết.</p>' +
+      '<p class="lead">Bài học bám sát sách giáo khoa: từ vựng có hình, mẫu câu, luyện nói, bài tập bổ trợ, bài kiểm tra và file nghe. Mỗi bé đăng nhập sẽ vào đúng lớp của mình, học cùng ' + GAMES.length + ' trò chơi và trợ lý AI Chíp.</p>' +
       '<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center"><a class="btn btn-lg btn-pink" href="#/auth/login">Đăng nhập để học</a>' + ((store.get('ln_class', {}) || {}).allowReg ? '<a class="btn btn-lg" href="#/auth/register">Tạo tài khoản</a>' : '<span class="small muted">Tài khoản do giáo viên cấp</span>') + '</div></div>' +
       '<div class="blob">' + chibi({ size: 240, mood: 'wow', pose: 'wave', acc: 'grad', cls: 'bob' }) +
       '<span class="float-word" style="left:6%;top:12%">Hello!</span><span class="float-word" style="right:4%;bottom:20%;transform:rotate(6deg)">🍇 grapes</span><span class="float-word" style="left:10%;bottom:8%;transform:rotate(-5deg)">I can swim 🏊</span></div>' +
       '</div></section>' +
-      '<section class="wrap" style="padding-bottom:40px"><div class="feats">' +
-      '<div class="feat f1"><div class="em">🎮</div><h3>21 trò chơi</h3><p>Bắn bóng bay, máy bay, mê cung, đấu trường, ô chữ… có âm thanh đúng / sai.</p></div>' +
-      '<div class="feat f2"><div class="em">💬</div><h3>Mẫu câu & giải thích</h3><p>Làm sai là có dịch nghĩa và giải thích vì sao, đọc bằng giọng Mỹ chuẩn.</p></div>' +
-      '<div class="feat f3"><div class="em">📚</div><h3>Ngữ pháp tổng hợp</h3><p>Công thức khẳng định – phủ định – nghi vấn của từng thì, từng cấu trúc.</p></div>' +
-      '<div class="feat f4"><div class="em">🏆</div><h3>Sao và sticker</h3><p>Làm đúng được sao, xong Unit được sticker. Thầy cô theo dõi bé học tới đâu.</p></div>' +
+      '<section class="wrap"><h2 class="sub" style="margin:0 0 12px">Các khoá học</h2><div class="crss">' + chips + '</div></section>' +
+      '<section class="wrap" style="padding-top:24px;padding-bottom:40px"><div class="feats">' +
+      '<div class="feat f1"><div class="em">🎮</div><h3>' + GAMES.length + ' trò chơi</h3><p>Đua xe, đập chuột chũi, câu cá, bắn bóng bay, đại chiến quái vật… học từ mà như chơi.</p></div>' +
+      '<div class="feat f2"><div class="em">🤖</div><h3>Trợ lý AI Chíp</h3><p>Chấm phát âm từng từ, chấm câu trả lời nói, trò chuyện tiếng Anh và giải thích câu sai.</p></div>' +
+      '<div class="feat f3"><div class="em">📚</div><h3>Bám sát sách</h3><p>Bài tập bổ trợ, 3–4 bài kiểm tra mỗi Unit, file nghe có đáp án tự chấm và Ngữ pháp tổng hợp.</p></div>' +
+      '<div class="feat f4"><div class="em">🏆</div><h3>Sao và sticker</h3><p>Làm đúng được sao, xong Unit được sticker. Thầy cô theo dõi bé học tới đâu ở mọi máy.</p></div>' +
       '</div></section></main>' + footer());
   }
 

@@ -233,7 +233,7 @@
     c.fillStyle = '#FFF4CF'; c.beginPath(); c.arc(1010, 1540, 190, 0, 7); c.fill(); c.fillStyle = '#FFE6EE'; c.beginPath(); c.arc(60, 1570, 120, 0, 7); c.fill();
     rr(c, 40, 40, 1000, 230, 44, '#FFE6EE');
     c.fillStyle = '#C93A6C'; c.font = '800 58px ' + HEAD; c.fillText('PHIẾU BÁO CÁO HỌC TẬP', 84, 132);
-    c.fillStyle = INK2; c.font = '700 30px ' + BODY; c.fillText('Tiếng Anh lớp 4 · Lớp Nhỏ', 86, 182);
+    c.fillStyle = INK2; c.font = '700 30px ' + BODY; c.fillText('Aurora English · ' + LN.gradeName(all.u.grade), 86, 182);
     var to = new Date(), from = RP.days ? new Date(Date.now() - (RP.days - 1) * 86400000) : (all.u.created ? new Date(all.u.created) : new Date());
     c.font = '600 26px ' + BODY; c.fillText((RP.days ? RP.days + ' ngày: ' : 'Toàn bộ: ') + fmtD(from) + ' – ' + fmtD(to), 86, 228);
     drawChick(c, 820, 52, 200);
@@ -419,7 +419,7 @@
   /* ================= Lớp học: sĩ số, điểm danh, học phí ================= */
   function money(n) { return (Math.round(n) || 0).toLocaleString('vi-VN') + ' đ'; }
   LN.money = money;
-  function klass() { return Object.assign({ name: 'Lớp tiếng Anh 4', fee: 600000, days: [2, 4, 6] }, store.get('ln_class', {})); }
+  function klass() { return Object.assign({ name: 'Lớp tiếng Anh Aurora', fee: 600000, days: [2, 4, 6] }, store.get('ln_class', {})); }
   function ym(d) { d = d || new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
   function ymLabel(m) { var a = m.split('-'); return (+a[1]) + '/' + a[0]; }
   function monthsBetween(a, b) { var out = [], y = +a.slice(0, 4), m = +a.slice(5, 7), y2 = +b.slice(0, 4), m2 = +b.slice(5, 7), g = 0; while ((y < y2 || (y === y2 && m <= m2)) && g++ < 240) { out.push(y + '-' + String(m).padStart(2, '0')); m++; if (m > 12) { m = 1; y++; } } return out; }
@@ -647,7 +647,7 @@
     c.fillStyle = '#FFF4CF'; c.beginPath(); c.arc(1010, 1830, 190, 0, 7); c.fill(); c.fillStyle = '#FFE6EE'; c.beginPath(); c.arc(60, 1860, 120, 0, 7); c.fill();
     rr(c, 40, 40, 1000, 230, 44, '#FFE6EE');
     c.fillStyle = '#C93A6C'; c.font = '800 58px ' + HEAD; c.fillText('PHIẾU BÁO CÁO HỌC TẬP', 84, 132);
-    c.fillStyle = INK2; c.font = '700 30px ' + BODY; c.fillText('Aurora English · Tiếng Anh lớp 4 · ' + klass().name, 86, 182);
+    c.fillStyle = INK2; c.font = '700 30px ' + BODY; c.fillText('Aurora English · ' + LN.gradeName(all.u.grade) + ' · ' + klass().name, 86, 182);
     var to = new Date(), from = RP.days ? new Date(Date.now() - (RP.days - 1) * 86400000) : (all.u.created ? new Date(all.u.created) : new Date());
     c.font = '600 26px ' + BODY; c.fillText((RP.days ? RP.days + ' ngày qua: ' : 'Từ đầu khoá: ') + fmtD(from) + ' – ' + fmtD(to), 86, 228);
     drawChick(c, 820, 52, 200);
