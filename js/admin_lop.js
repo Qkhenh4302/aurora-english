@@ -26,9 +26,12 @@
   function shell(active, body) { LN.adminShell(active, body); }
   function curStudents(cl, ym) { return (cl.students || []).filter(function (st) { return (!st.left || st.left >= ym + '-01') && (!st.joined || st.joined <= K.monthDays(ym).pop()); }); }
   function schedTxt(cl) {
-    var td = today();
-    return (cl.slots || []).filter(function (s) { return !s.to || s.to >= td; }).sort(function (a, b) { return ((a.dow + 6) % 7) - ((b.dow + 6) % 7); })
-      .map(function (s) { return DOWS_S[s.dow] + ' ' + K.timeTxt(s.start) + '–' + K.timeTxt(s.end) + (s.from && s.from > td ? ' (từ ' + dmy(s.from) + ')' : ''); }).join(' · ') || 'Chưa có lịch';
+    var td = today(), act = (cl.slots || []).filter(function (s) { return !s.to || s.to >= td; });
+    function fmt(list) { return list.sort(function (a, b) { return ((a.dow + 6) % 7) - ((b.dow + 6) % 7); }).map(function (s) { return DOWS_S[s.dow] + ' ' + K.timeTxt(s.start) + '–' + K.timeTxt(s.end); }).join(' · '); }
+    var now = act.filter(function (s) { return !s.from || s.from <= td; }), fut = act.filter(function (s) { return s.from && s.from > td; }), out = fmt(now);
+    var froms = []; fut.forEach(function (s) { if (froms.indexOf(s.from) < 0) froms.push(s.from); }); froms.sort();
+    froms.forEach(function (f) { out += (out ? ' → ' : '') + 'từ ' + dmy(f) + ': ' + fmt(fut.filter(function (s) { return s.from === f; })); });
+    return out || 'Chưa có lịch';
   }
   function ruleTxt(cl) { var b = cl.billing || {}, p = K.priceOf(cl, null, today()); return money(p) + '/buổi · ' + (b.mode === 'pack' ? 'đóng theo gói ' + (b.size || 5) + ' buổi' : 'tính theo số buổi đi học trong tháng'); }
   function stuOf(sid) { var r = null; clsList(true).some(function (cl) { return (cl.students || []).some(function (s) { if (s.id === sid) { r = { cl: cl, st: s }; return true; } return false; }); }); return r; }
@@ -46,6 +49,48 @@
     } catch (e) { return '<p class="small muted">Không tạo được mã QR</p>'; }
   }
   function payNote(st, ym) { return 'HP T' + (+ym.slice(5)) + ' ' + (st.user || uname(st.name)); }
+
+  /* Ô tick "Đã đóng": tick → xác nhận số tiền → tự ghi lần đóng tiền & cập nhật trạng thái */
+  function paidBox(sid, ym, R) {
+    if (!R.fee && !R.L.billed) return '';
+    var ok = R.total <= 0;
+    return '<label class="paid-ck' + (ok ? ' on' : '') + '" title="' + (ok ? 'Đã đóng đủ – bấm để bỏ đánh dấu' : 'Tick khi phụ huynh đã chuyển tiền') + '"><input type="checkbox" data-act="lp-paidck" data-s="' + esc(sid) + '" data-m="' + ym + '"' + (ok ? ' checked' : '') + '><span>' + (ok ? 'Đã đóng' : 'Đã đóng?') + '</span></label>';
+  }
+  function paidModal(sid, ym) {
+    var x = stuOf(sid); if (!x) return; var R = report(x.cl, x.st, ym);
+    if (R.total > 0) {
+      modal('<h2>✅ Xác nhận đã đóng học phí</h2><p class="muted">' + esc(x.st.name) + ' · ' + esc(x.cl.name) + ' · ' + ymTxt(ym) + '</p>' +
+        '<table class="fee-t"><tbody>' + (R.oldRem ? '<tr class="old"><td>Nợ các tháng trước</td><td>' + money(R.oldRem) + '</td></tr>' : '') + '<tr><td>Còn thiếu ' + mTxt(ym) + '</td><td>' + money(R.feeRem) + '</td></tr></tbody><tfoot><tr><td>Tổng cần đóng</td><td>' + money(R.total) + '</td></tr></tfoot></table>' +
+        '<form id="lp-paidf" class="lp-sub"><div class="two">' + field('pk-a', 'Số tiền phụ huynh đã chuyển', '<input class="inp" type="number" step="1000" min="1000" id="pk-a" name="amount" value="' + R.total + '" required>') + field('pk-d', 'Ngày nhận', '<input class="inp" type="date" id="pk-d" name="date" value="' + today() + '">') + '</div>' +
+        field('pk-m', 'Hình thức', '<select class="sel" id="pk-m" name="method"><option>Chuyển khoản</option><option>Tiền mặt</option></select>') +
+        '<p class="tiny muted">Chuyển thiếu thì sửa lại đúng số tiền – phần còn lại tự cộng dồn sang tháng sau.</p><button class="btn btn-lg btn-mint" type="submit">✅ Xác nhận đã nhận tiền</button></form>');
+      var f = document.getElementById('lp-paidf');
+      f.addEventListener('submit', function (ev) {
+        ev.preventDefault(); var a = +f.amount.value; if (!(a > 0)) return;
+        var P = pays(); P[sid] = P[sid] || []; P[sid].push({ id: 'p' + Date.now().toString(36), date: f.date.value || today(), amount: a, method: f.method.value, note: 'Tick đã đóng ' + mTxt(ym), ym: ym, at: Date.now() });
+        store.set('ln_pay', P); closeModal(); toast('Đã ghi nhận ' + money(a) + ' cho ' + x.st.name); refresh();
+      });
+    } else {
+      var list = payOf(sid).slice().sort(function (a, b) { return (a.at || 0) < (b.at || 0) ? 1 : -1; }), last = list.filter(function (p) { return p.ym === ym; })[0] || list[0];
+      modal('<h2>Bỏ đánh dấu đã đóng?</h2><p class="muted">' + esc(x.st.name) + ' · ' + ymTxt(ym) + '</p>' + (last ? '<p>Lần đóng gần nhất: <b>' + money(last.amount) + '</b> ngày ' + dmyy(last.date) + (last.method ? ' (' + esc(last.method) + ')' : '') + '.</p><p class="small muted">Xoá lần đóng này thì học phí sẽ tính lại là chưa đóng.</p><button class="btn btn-red" data-act="lp-unpaid" data-s="' + esc(sid) + '" data-id="' + esc(last.id) + '">Xoá lần đóng này</button> <button class="btn" data-act="lp-close">Giữ nguyên</button>' : '<p>Học phí tháng này bằng 0 nên không cần đóng.</p>'));
+    }
+  }
+  function schedModal(cid) {
+    var cl = classes()[cid], td = today();
+    modal('<h2>🗓 Đổi lịch học cố định</h2><p class="muted">' + esc(cl.name) + ' – lịch mới tự điền cho các tháng sau. Buổi trước ngày áp dụng giữ nguyên (cả điểm danh và học phí).</p><form id="lp-schedm"><div id="lp-slots">' + (cl.slots || []).filter(function (s) { return !s.to || s.to >= td; }).map(slotRow).join('') + '</div>' +
+      '<button type="button" class="btn btn-sm" data-act="lp-addslot">＋ Thêm buổi trong tuần</button><div class="two" style="margin-top:12px;align-items:end">' + field('sm-f', 'Áp dụng từ ngày', '<input class="inp" type="date" id="sm-f" name="from" value="' + td + '">') + '<div><button class="btn btn-pink" type="submit">Lưu lịch mới</button></div></div>' +
+      '<p class="tiny muted">Chỉ đổi một buổi lẻ (dời ngày, học bù)? Bấm vào <b>ngày</b> trên bảng điểm danh.</p></form>', 'wide');
+    var f = document.getElementById('lp-schedm');
+    f.addEventListener('submit', function (ev) { ev.preventDefault(); saveSched(cid, f); closeModal(); refresh(); });
+  }
+  function saveSched(cid, f) {
+    var from = f.from.value || today();
+    var ns = [].slice.call(f.querySelectorAll('.lp-slot')).map(function (r) { return { dow: +r.querySelector('[name=dow]').value, start: r.querySelector('[name=start]').value, end: r.querySelector('[name=end]').value, from: from, to: null }; }).filter(function (s) { return s.start; });
+    var c = classes()[cid], prev = K.addDays(from, -1);
+    c.slots = (c.slots || []).filter(function (s) { return !(s.from && s.from >= from); }).map(function (s) { if (!s.to || s.to >= from) s.to = prev; return s; }).filter(function (s) { return !s.from || s.from <= s.to; }).concat(ns);
+    saveCls(c); toast('Đã lưu lịch mới, áp dụng từ ' + dmyy(from)); return c;
+  }
+  function byUser(un) { var r = null; clsList(true).some(function (cl) { return (cl.students || []).some(function (s) { if (s.user === un) { r = { cl: cl, st: s }; return !s.left; } return false; }); }); return r; }
 
   /* ================= Nhập dữ liệu từ file điểm danh (tự chạy 1 lần) ================= */
   function runSeed() {
@@ -108,8 +153,8 @@
             [[1, '✅', 'Có mặt'], [0, '❌', 'Vắng'], [2, '🟡', 'Có phép']].map(function (o) { return '<button type="button" class="lp-b v' + o[0] + (v === o[0] ? ' on' : '') + '" data-act="lp-mark" data-s="' + esc(st.id) + '" data-v="' + o[0] + '" title="' + o[2] + '">' + o[1] + '<span>' + o[2] + '</span></button>'; }).join('') + '</div></div>';
         }).join('') + '</div><p class="tiny muted" style="margin-top:8px">Chỉ buổi ✅ có mặt được tính học phí.</p>';
     }
-    h += '<details class="lp-more"><summary>Đổi buổi học…</summary><div class="lp-mf">' +
-      (s.off ? '' : '<button class="btn btn-sm" data-act="lp-offform">🚫 Lớp nghỉ buổi này</button>') +
+    h += '<details class="lp-more"><summary>Bỏ buổi · dời buổi…</summary><div class="lp-mf">' +
+      (s.off ? '' : '<button class="btn btn-sm" data-act="lp-offform">➖ Bỏ buổi này / lớp nghỉ</button>') +
       '<button class="btn btn-sm" data-act="lp-moveform">🔁 Dời sang ngày khác</button>' +
       (s.extra ? '<button class="btn btn-sm btn-red" data-act="lp-delsess">🗑 Xoá buổi thêm này</button>' : '') + '</div><div id="lp-sub"></div></details>';
     modal(h);
@@ -262,7 +307,7 @@
     var cd = cdata(cid), td = today(), ss = K.monthSessions(cl, cd, ym), sts = curStudents(cl, ym), pack = (cl.billing || {}).mode === 'pack';
     var head = '<a href="#/admin" class="backlink">← Các lớp</a><div class="sh-hero" style="--c:' + esc(cl.color) + '"><div><h1>' + esc(cl.name) + '</h1><p>🗓 ' + esc(schedTxt(cl)) + '</p><p>💰 ' + esc(ruleTxt(cl)) + '</p></div><a class="btn btn-sm" href="#/admin/lop/' + esc(cid) + '/set">⚙ Lịch & học phí</a></div>';
     var bar = '<div class="sh-bar"><div class="sh-mnav"><a class="btn btn-sm" href="#/admin/lop/' + esc(cid) + '/' + K.ymAdd(ym, -1) + '" aria-label="Tháng trước">‹</a><h2>' + ymTxt(ym) + '</h2><a class="btn btn-sm" href="#/admin/lop/' + esc(cid) + '/' + K.ymAdd(ym, 1) + '" aria-label="Tháng sau">›</a></div>' +
-      '<div class="sh-tools"><button class="btn btn-sm" data-act="lp-addsess" data-c="' + esc(cid) + '">＋ Thêm buổi</button><button class="btn btn-sm" data-act="lp-addst" data-c="' + esc(cid) + '">＋ Học sinh</button><a class="btn btn-sm btn-pink" href="#/admin/phieu/' + esc(cid) + '/' + ym + '">📄 Phiếu báo ' + mTxt(ym) + '</a></div></div>';
+      '<div class="sh-tools"><button class="btn btn-sm" data-act="lp-addsess" data-c="' + esc(cid) + '">＋ Thêm buổi</button><button class="btn btn-sm" data-act="lp-sched" data-c="' + esc(cid) + '">🗓 Đổi lịch</button><button class="btn btn-sm" data-act="lp-addst" data-c="' + esc(cid) + '">＋ Học sinh</button><a class="btn btn-sm btn-pink" href="#/admin/phieu/' + esc(cid) + '/' + ym + '">📄 Phiếu báo ' + mTxt(ym) + '</a></div></div>';
     var T = { n: 0, fee: 0, old: 0, paid: 0, tot: 0 };
     var table = !sts.length ? '<p class="muted">Chưa có học sinh. Bấm “＋ Học sinh”.</p>' : '<div class="sh-wrap"><table class="sh"><thead><tr><th class="nm">Học sinh</th>' + ss.map(function (s) {
       return '<th class="d' + (s.off ? ' off' : '') + (s.date === td ? ' td' : '') + (s.extra ? ' ex' : '') + '"><button type="button" data-act="lp-sess" data-c="' + esc(cid) + '" data-k="' + esc(s.key) + '" title="Điểm danh cả buổi / đổi buổi">' + DOWS_S[K.dow(s.date)] + '<b>' + dmy(s.date) + '</b>' + (s.off ? '<i>nghỉ</i>' : s.extra ? '<i>thêm</i>' : '') + '</button></th>';
@@ -277,7 +322,7 @@
         }).join('');
         T.n += R.count.p; T.fee += R.fee; T.old += R.oldRem; T.paid += R.feePaid; T.tot += R.total;
         return '<tr><th class="nm"><button type="button" class="nm-b" data-act="lp-stu" data-s="' + esc(st.id) + '" data-m="' + ym + '">' + esc(st.name) + (st.user ? '' : ' <span class="tag tag-yel">!</span>') + '</button></th>' + cells +
-          '<td class="sm"><b>' + R.count.p + '</b></td><td class="sm">' + money(R.fee) + '</td><td class="sm">' + (R.oldRem ? '<span class="neg">' + money(R.oldRem) + '</span>' : '–') + '</td><td class="sm">' + (R.feePaid ? money(R.feePaid) : '–') + '</td><td class="sm tot">' + (R.total > 0 ? '<b class="neg">' + money(R.total) + '</b>' : '<span class="ok">✓</span>') + '</td></tr>';
+          '<td class="sm"><b>' + R.count.p + '</b></td><td class="sm">' + money(R.fee) + '</td><td class="sm">' + (R.oldRem ? '<span class="neg">' + money(R.oldRem) + '</span>' : '–') + '</td><td class="sm">' + (R.feePaid ? money(R.feePaid) : '–') + '</td><td class="sm tot">' + (R.total > 0 ? '<b class="neg">' + money(R.total) + '</b>' : '<span class="ok">✓</span>') + paidBox(st.id, ym, R) + '</td></tr>';
       }).join('') + '</tbody><tfoot><tr><th class="nm">Tổng</th>' + ss.map(function () { return '<td></td>'; }).join('') + '<td class="sm"><b>' + T.n + '</b></td><td class="sm"><b>' + money(T.fee) + '</b></td><td class="sm">' + money(T.old) + '</td><td class="sm">' + money(T.paid) + '</td><td class="sm tot"><b>' + money(T.tot) + '</b></td></tr></tfoot></table></div>' +
       '<p class="sh-legend"><span class="lp-c v1">1</span> có mặt (tính tiền) <span class="lp-c v0">0</span> vắng <span class="lp-c v2">P</span> có phép <span class="lp-c vn miss"></span> chưa điểm danh · Bấm ô để đổi, bấm <b>ngày</b> để điểm danh cả buổi, bấm <b>tên</b> để xem chi tiết & thu tiền.</p>';
     if (!ss.length && sts.length) table = '<p class="muted">' + ymTxt(ym) + ' chưa có buổi học nào theo lịch.</p>' + table;
@@ -308,11 +353,7 @@
     shell('lop', body);
     var f1 = document.getElementById('lp-sched');
     f1.addEventListener('submit', function (ev) {
-      ev.preventDefault(); var from = f1.from.value || today();
-      var ns = [].slice.call(f1.querySelectorAll('.lp-slot')).map(function (r) { return { dow: +r.querySelector('[name=dow]').value, start: r.querySelector('[name=start]').value, end: r.querySelector('[name=end]').value, from: from, to: null }; }).filter(function (s) { return s.start; });
-      var c = classes()[cl.id], prev = K.addDays(from, -1);
-      c.slots = (c.slots || []).filter(function (s) { return !(s.from && s.from >= from); }).map(function (s) { if (!s.to || s.to >= from) s.to = prev; return s; }).filter(function (s) { return !s.from || s.from <= s.to; }).concat(ns);
-      saveCls(c); toast('Đã lưu lịch, áp dụng từ ' + dmyy(from)); viewClassSet(c);
+      ev.preventDefault(); viewClassSet(saveSched(cl.id, f1));
     });
     var f2 = document.getElementById('lp-fee');
     f2.mode.addEventListener('change', function () { f2.querySelector('.pk').hidden = f2.mode.value !== 'pack'; });
@@ -341,7 +382,7 @@
           var R = x.R, od = R.total > 0 && R.due && today() > R.due;
           return '<tr><td><button class="nm-b" data-act="lp-stu" data-s="' + esc(x.st.id) + '" data-m="' + ym + '">' + esc(x.st.name) + '</button></td><td>' + R.count.p + '</td><td>' + money(R.fee) + '</td><td>' + (R.oldRem ? '<span class="neg">' + money(R.oldRem) + '</span>' : '–') + '</td><td>' + (R.feePaid ? money(R.feePaid) : '–') + '</td>' +
             '<td>' + (R.total > 0 ? '<b class="neg">' + money(R.total) + '</b>' + (od ? ' <span class="tag tag-red">quá hạn</span>' : '') : '<span class="ok">Đủ ✓</span>') + '</td>' +
-            '<td class="hp-a"><button class="btn btn-sm btn-mint" data-act="lp-pay" data-s="' + esc(x.st.id) + '" data-m="' + ym + '">＋ Thu</button><a class="btn btn-sm" href="#/admin/phieu/' + esc(cl.id) + '/' + ym + '/' + esc(x.st.id) + '" title="Phiếu báo">📄</a></td></tr>';
+            '<td class="hp-a">' + paidBox(x.st.id, ym, R) + '<button class="btn btn-sm" data-act="lp-pay" data-s="' + esc(x.st.id) + '" data-m="' + ym + '" title="Ghi số tiền khác (đóng thiếu, đóng trước…)">＋ Thu</button><a class="btn btn-sm" href="#/admin/phieu/' + esc(cl.id) + '/' + ym + '/' + esc(x.st.id) + '" title="Phiếu báo">📄</a></td></tr>';
         }).join('') + '</tbody></table></div></div>';
     }).join('');
     var body = '<div class="ad-h"><div><h1>Học phí</h1><p class="muted">Học phí tháng = số buổi có mặt × giá. Tháng trước còn thiếu thì tự cộng dồn sang.</p></div>' +
@@ -359,26 +400,45 @@
   }
 
   /* ================= Phiếu báo học phí gửi phụ huynh ================= */
+  function noteKey(st) { return 'ln_note_' + (st.user || String(st.id).replace(/[^a-z0-9_]/g, '_')).slice(0, 40); }
+  /* Tiến độ học trên app của bé trong tháng (lấy từ tài khoản học sinh) */
+  function learnOf(st, ym) {
+    if (!st.user || !LN.users()[st.user] || !LN.adminSummary) return null;
+    var S = LN.adminSummary(st.user, 0), p = S.p, days = 0, ans = 0, right = 0, tot = 0;
+    Object.keys(p.days || {}).forEach(function (k) { if (k.slice(0, 7) === ym && p.days[k]) { days++; ans += p.days[k]; } });
+    (p.log || []).forEach(function (l) { if (l.game || !l.t) return; if (K.iso(new Date(l.t)).slice(0, 7) === ym) { right += l.right; tot += l.total; } });
+    return { units: S.units.length, done: S.unitsDone, overall: S.overall, cur: S.cur, acc: tot ? Math.round(right * 100 / tot) : null, days: days, ans: ans, stars: S.stars, accAll: S.acc };
+  }
+  function phieuData(cl, st, ym) {
+    var R = report(cl, st, ym), B = bank(), pack = (cl.billing || {}).mode === 'pack', pn = payNote(st, ym), lines = [];
+    R.cur.forEach(function (r) { lines.push({ t: pack ? r.label + ': ' + r.size + ' buổi × ' + money(r.price) : 'Học phí ' + mTxt(ym) + ': ' + r.n + ' buổi × ' + money(r.price), v: money(r.amount) }); });
+    if (!R.cur.length) lines.push({ t: 'Học phí ' + mTxt(ym) + (pack ? ' (chưa đủ gói)' : ': 0 buổi'), v: '0đ' });
+    if (R.feePaid) lines.push({ t: 'Đã đóng', v: '−' + money(R.feePaid) });
+    R.old.forEach(function (r) { lines.push({ t: 'Còn thiếu ' + r.label.toLowerCase() + ' (cộng dồn)', v: '+' + money(r.rem), old: true }); });
+    var chips = R.sessions.filter(function (s) { return s.v != null || s.date <= today(); }).map(function (s) {
+      var t = s.off ? ['off', '–'] : s.v === 1 ? ['p', '✓'] : s.v === 0 ? ['a', '✗'] : s.v === 2 ? ['e', 'P'] : ['n', '·'];
+      return { c: t[0], m: t[1], l: DOWS_S[K.dow(s.date)] + ' ' + dmy(s.date) };
+    });
+    return { R: R, B: B, pack: pack, pn: K.asciiNote(pn), qr: R.total > 0 && B.qr && K.qrValid(B.qr) ? (B.amt ? K.vietqr(B.qr, R.total, pn) : B.qr) : '', lines: lines, chips: chips,
+      learn: learnOf(st, ym), comment: store.get(noteKey(st), '') || '' };
+  }
   function phieuHtml(cl, st, ym) {
-    var R = report(cl, st, ym), B = bank(), pack = (cl.billing || {}).mode === 'pack', note = payNote(st, ym);
-    var qr = B.qr && K.qrValid(B.qr) ? (B.amt ? K.vietqr(B.qr, R.total, note) : B.qr) : '';
-    var chips = R.sessions.filter(function (s) { return s.v != null || s.date <= today(); }).map(function (s) { var t = s.off ? ['off', '–'] : s.v === 1 ? ['p', '✓'] : s.v === 0 ? ['a', '✗'] : s.v === 2 ? ['e', 'P'] : ['n', '·']; return '<span class="rp-s ' + t[0] + '"><i>' + t[1] + '</i>' + DOWS_S[K.dow(s.date)] + ' ' + dmy(s.date) + '</span>'; }).join('');
-    var lines = '';
-    R.cur.forEach(function (r) { lines += '<tr><td>' + (pack ? esc(r.label) + ': ' + r.size + ' buổi × ' + money(r.price) : 'Học phí ' + mTxt(ym) + ': ' + r.n + ' buổi × ' + money(r.price)) + '</td><td>' + money(r.amount) + '</td></tr>'; });
-    if (!R.cur.length) lines += '<tr><td>Học phí ' + mTxt(ym) + (pack ? ' (chưa đủ gói)' : ': 0 buổi') + '</td><td>0đ</td></tr>';
-    if (R.feePaid) lines += '<tr><td>Đã đóng</td><td>−' + money(R.feePaid) + '</td></tr>';
-    R.old.forEach(function (r) { lines += '<tr class="old"><td>Còn thiếu ' + esc(r.label.toLowerCase()) + ' (cộng dồn)</td><td>+' + money(r.rem) + '</td></tr>'; });
+    var D = phieuData(cl, st, ym), R = D.R, B = D.B, Lr = D.learn;
+    var learn = !Lr ? '' : '<h3>Học trên app Aurora</h3><div class="rp-learn">' +
+      (Lr.units ? '<div><b>' + Lr.done + '/' + Lr.units + '</b><span>bài đã xong</span></div><div><b>' + Lr.overall + '%</b><span>tiến độ chung</span></div>' : '') +
+      '<div><b>' + Lr.days + '</b><span>ngày tự học ' + mTxt(ym) + '</span></div><div><b>' + (Lr.acc == null ? '—' : Lr.acc + '%') + '</b><span>làm đúng ' + mTxt(ym) + '</span></div></div>' +
+      (Lr.units && Lr.cur ? '<p class="small muted">Đang học: Bài ' + Lr.cur.n + (Lr.cur.vi ? '. ' + esc(Lr.cur.vi) : Lr.cur.title ? '. ' + esc(Lr.cur.title) : '') + '</p>' : '');
     return '<article class="rp" id="rp-' + esc(st.id) + '" style="--c:' + esc(cl.color) + '">' +
       '<header class="rp-h">' + LN.logo(44) + '<div><b>AURORA ENGLISH</b><span>Phiếu báo học tập & học phí</span></div><em>' + ymTxt(ym) + '</em></header>' +
       '<div class="rp-who"><div><span>Học sinh</span><b>' + esc(st.name) + '</b></div><div><span>Lớp</span><b>' + esc(cl.name) + '</b></div></div>' +
-      '<h3>Điểm danh</h3><p class="rp-cnt">Có mặt <b>' + R.count.p + '</b> · Vắng <b>' + R.count.a + '</b> · Có phép <b>' + R.count.e + '</b></p><div class="rp-ss">' + (chips || '<span class="muted small">Chưa có buổi học</span>') + '</div>' +
-      (R.progress ? '<p class="small">Gói đang học: ' + R.progress.done + '/' + R.progress.size + ' buổi</p>' : '') +
-      '<h3>Học phí</h3><table class="rp-t"><tbody>' + lines + '</tbody><tfoot><tr><td>TỔNG CẦN ĐÓNG' + (R.total > 0 && R.due ? '<small>Hạn đóng: ' + dmyy(R.due) + '</small>' : '') + '</td><td>' + (R.total > 0 ? money(R.total) : 'Đã đủ ✓') + '</td></tr></tfoot></table>' +
+      '<h3>Điểm danh trên lớp</h3><p class="rp-cnt">Có mặt <b>' + R.count.p + '</b> · Vắng <b>' + R.count.a + '</b> · Có phép <b>' + R.count.e + '</b></p><div class="rp-ss">' + (D.chips.map(function (c) { return '<span class="rp-s ' + c.c + '"><i>' + c.m + '</i>' + c.l + '</span>'; }).join('') || '<span class="muted small">Chưa có buổi học</span>') + '</div>' +
+      (R.progress ? '<p class="small">Gói đang học: ' + R.progress.done + '/' + R.progress.size + ' buổi</p>' : '') + learn +
+      '<h3>Học phí</h3><table class="rp-t"><tbody>' + D.lines.map(function (l) { return '<tr' + (l.old ? ' class="old"' : '') + '><td>' + esc(l.t) + '</td><td>' + l.v + '</td></tr>'; }).join('') + '</tbody><tfoot><tr><td>TỔNG CẦN ĐÓNG' + (R.total > 0 && R.due ? '<small>Hạn đóng: ' + dmyy(R.due) + '</small>' : '') + '</td><td>' + (R.total > 0 ? money(R.total) : 'Đã đủ ✓') + '</td></tr></tfoot></table>' +
       (R.credit ? '<p class="small">Phụ huynh đã đóng dư ' + money(R.credit) + ', sẽ trừ vào tháng sau.</p>' : '') +
-      (R.total > 0 && qr ? '<div class="rp-qr">' + qrSvg(qr, 150) + '<div><b>' + esc(B.bank) + '</b><span>' + esc(B.holder) + '</span>' + (B.amt ? '<span>Số tiền: <b>' + money(R.total) + '</b></span><span>Nội dung: <b>' + esc(K.asciiNote(note)) + '</b></span><small>Quét mã bằng app ngân hàng – số tiền và nội dung đã điền sẵn.</small>' : '<span>Nội dung CK: <b>' + esc(K.asciiNote(note)) + '</b></span>') + '</div></div>' : '') +
-      '<div class="rp-note" contenteditable="true" data-ph="Nhận xét của cô (bấm để viết)…"></div>' +
+      (D.qr ? '<div class="rp-qr">' + qrSvg(D.qr, 150) + '<div><b>' + esc(B.bank) + '</b><span>' + esc(B.holder) + '</span>' + (B.amt ? '<span>Số tiền: <b>' + money(R.total) + '</b></span>' : '') + '<span>Nội dung: <b>' + esc(D.pn) + '</b></span>' + (B.amt ? '<small>Quét mã bằng app ngân hàng – số tiền và nội dung đã điền sẵn.</small>' : '') + '</div></div>' : '') +
+      '<div class="rp-note" contenteditable="true" data-s="' + esc(st.id) + '" data-ph="Nhận xét của cô (bấm để viết, tự lưu)…">' + esc(D.comment) + '</div>' +
       '<footer class="rp-f">Cảm ơn phụ huynh đã đồng hành cùng con! 💛</footer>' +
-      '<div class="rp-acts"><button class="btn btn-sm btn-pink" data-act="lp-img" data-s="' + esc(st.id) + '" data-m="' + ym + '">⬇ Tải ảnh / Gửi Zalo</button><button class="btn btn-sm" data-act="lp-msg" data-s="' + esc(st.id) + '" data-m="' + ym + '">📋 Sao chép tin nhắn</button><button class="btn btn-sm btn-mint" data-act="lp-pay" data-s="' + esc(st.id) + '" data-m="' + ym + '">＋ Thu tiền</button></div></article>';
+      '<div class="rp-acts"><button class="btn btn-sm btn-pink" data-act="lp-img" data-s="' + esc(st.id) + '" data-m="' + ym + '">⬇ Tải ảnh / Gửi Zalo</button><button class="btn btn-sm" data-act="lp-msg" data-s="' + esc(st.id) + '" data-m="' + ym + '">📋 Sao chép tin nhắn</button>' + paidBox(st.id, ym, R) + '</div></article>';
   }
   function viewPhieu(cid, ym, sid) {
     if (ensureSeed() === 'wait') { shell('hocphi', '<div class="card"><p class="muted">Đang tải…</p></div>'); return; }
@@ -402,22 +462,92 @@
     t += R.total > 0 ? '👉 Tổng cần đóng: ' + money(R.total) + (R.due ? ' – hạn ' + dmyy(R.due) : '') + '.\nChuyển khoản ' + B.bank + ' – ' + B.holder + ', nội dung: ' + K.asciiNote(payNote(st, ym)) + ' (quét mã QR trong phiếu).\n' : '👉 Học phí đã đóng đủ.\n';
     return t + 'Cảm ơn phụ huynh đã đồng hành cùng con! 💛';
   }
-  function loadH2C() {
-    if (window.html2canvas) return Promise.resolve(window.html2canvas);
-    return new Promise(function (ok, no) { var s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'; s.onload = function () { ok(window.html2canvas); }; s.onerror = no; document.head.appendChild(s); });
+  /* ---- Ảnh phiếu: tự vẽ bằng canvas (không cần mạng, chạy cả iPhone) ---- */
+  function drawPhieu(cl, st, ym) {
+    var D = phieuData(cl, st, ym), R = D.R, B = D.B, Lr = D.learn, W = 1080, cv = document.createElement('canvas'); cv.width = W; cv.height = 3200;
+    var c = cv.getContext('2d'), HEAD = '"Mali", "Quicksand", sans-serif', BODY = '"Quicksand", system-ui, sans-serif', INK = '#3B2A3A', INK2 = '#75606F', ACC = cl.color || '#F2558B', y;
+    function rr(x, y0, w, h, r, fill, stroke, lw) { c.beginPath(); c.moveTo(x + r, y0); c.arcTo(x + w, y0, x + w, y0 + h, r); c.arcTo(x + w, y0 + h, x, y0 + h, r); c.arcTo(x, y0 + h, x, y0, r); c.arcTo(x, y0, x + w, y0, r); c.closePath(); if (fill) { c.fillStyle = fill; c.fill(); } if (stroke) { c.strokeStyle = stroke; c.lineWidth = lw || 3; c.stroke(); } }
+    function txt(t, x, y0, font, col, align) { c.font = font; c.fillStyle = col; c.textAlign = align || 'left'; c.fillText(t, x, y0); c.textAlign = 'left'; }
+    function wrap(t, maxW) { var ws = String(t).split(/\s+/), out = [], cur = ''; ws.forEach(function (w) { var n = cur ? cur + ' ' + w : w; if (c.measureText(n).width > maxW && cur) { out.push(cur); cur = w; } else cur = n; }); if (cur) out.push(cur); return out; }
+    function h3(t) { y += 14; txt(t.toUpperCase(), 70, y, '800 24px ' + BODY, INK2); y += 18; }
+    c.fillStyle = '#FFFFFF'; c.fillRect(0, 0, W, cv.height);
+    // đầu phiếu
+    rr(30, 30, W - 60, 200, 40, '#FFE6EE'); c.fillStyle = ACC; c.fillRect(30, 30, 16, 200);
+    txt('AURORA ENGLISH', 76, 92, '800 30px ' + HEAD, '#C93A6C');
+    txt('PHIẾU BÁO HỌC TẬP & HỌC PHÍ', 76, 146, '800 44px ' + HEAD, INK);
+    txt(ymTxt(ym) + ' · ' + cl.name, 78, 196, '700 28px ' + BODY, INK2);
+    if (LN.drawChick) LN.drawChick(c, 850, 44, 170);
+    y = 300; txt('Học sinh', 70, y, '700 24px ' + BODY, INK2); y += 62; txt(st.name, 70, y, '800 58px ' + HEAD, INK); y += 50;
+    // điểm danh
+    h3('Điểm danh trên lớp'); y += 26;
+    [['Có mặt', R.count.p, '#DDF6EC', '#1E8A63'], ['Vắng', R.count.a, '#FFE4E2', '#C53D3D'], ['Có phép', R.count.e, '#FFF4CF', '#8A6200']].forEach(function (b, i) { var X = 70 + i * 320; rr(X, y, 300, 110, 24, b[2]); txt(String(b[1]), X + 26, y + 72, '800 54px ' + HEAD, b[3]); txt(b[0], X + 120, y + 66, '700 28px ' + BODY, INK); });
+    y += 140; var cx = 70;
+    c.font = '700 22px ' + BODY;
+    D.chips.forEach(function (ch) {
+      var w = c.measureText(ch.l).width + 70; if (cx + w > W - 70) { cx = 70; y += 54; }
+      var bg = { p: '#DDF6EC', a: '#FFE4E2', e: '#FFF4CF', off: '#F2EEF0', n: '#F4EEF1' }[ch.c], fg = { p: '#1E8A63', a: '#C53D3D', e: '#8A6200', off: '#A897A0', n: INK2 }[ch.c];
+      rr(cx, y, w, 44, 22, bg); c.fillStyle = '#fff'; c.beginPath(); c.arc(cx + 23, y + 22, 15, 0, 7); c.fill();
+      txt(ch.m, cx + 23, y + 30, '900 20px ' + BODY, fg, 'center'); txt(ch.l, cx + 46, y + 30, '700 22px ' + BODY, ch.c === 'off' ? '#A897A0' : INK); cx += w + 10;
+    });
+    y += D.chips.length ? 90 : 20;
+    if (R.progress) { txt('Gói đang học: ' + R.progress.done + '/' + R.progress.size + ' buổi', 70, y, '700 24px ' + BODY, INK2); y += 46; }
+    // học trên app
+    if (Lr) {
+      h3('Học trên app Aurora'); y += 26;
+      var items = (Lr.units ? [[Lr.done + '/' + Lr.units, 'bài đã xong'], [Lr.overall + '%', 'tiến độ chung']] : []).concat([[String(Lr.days), 'ngày tự học'], [Lr.acc == null ? '—' : Lr.acc + '%', 'làm đúng']]);
+      var bw = (W - 140 - (items.length - 1) * 16) / items.length;
+      items.forEach(function (it, i) { var X = 70 + i * (bw + 16); rr(X, y, bw, 120, 24, '#E2F1FD'); txt(it[0], X + 22, y + 64, '800 44px ' + HEAD, '#2E7CC0'); txt(it[1], X + 22, y + 102, '700 22px ' + BODY, INK2); });
+      y += 150;
+      if (Lr.units && Lr.cur) { txt('Đang học: Bài ' + Lr.cur.n + (Lr.cur.vi ? '. ' + Lr.cur.vi : ''), 70, y, '700 24px ' + BODY, INK2); y += 46; }
+    }
+    // học phí
+    h3('Học phí'); y += 30;
+    D.lines.forEach(function (l) {
+      c.font = '700 27px ' + BODY; var ls = wrap(l.t, 680);
+      ls.forEach(function (t, i) { txt(t, 70, y + i * 36, '700 27px ' + BODY, l.old ? '#C53D3D' : INK); });
+      txt(l.v, W - 70, y, '800 28px ' + BODY, l.old ? '#C53D3D' : INK, 'right'); y += ls.length * 36 + 14;
+      c.strokeStyle = '#EBCFD8'; c.setLineDash([6, 6]); c.lineWidth = 2; c.beginPath(); c.moveTo(70, y - 20); c.lineTo(W - 70, y - 20); c.stroke(); c.setLineDash([]);
+    });
+    y += 14; rr(50, y - 6, W - 100, 116, 26, R.total > 0 ? '#FFF0F4' : '#DDF6EC');
+    txt('TỔNG CẦN ĐÓNG', 80, y + 50, '900 34px ' + HEAD, INK); if (R.total > 0 && R.due) txt('Hạn đóng: ' + dmyy(R.due), 80, y + 90, '700 24px ' + BODY, INK2);
+    txt(R.total > 0 ? money(R.total) : 'Đã đủ ✓', W - 80, y + 68, '900 52px ' + HEAD, R.total > 0 ? '#C93A6C' : '#1E8A63', 'right'); y += 140;
+    if (R.credit) { txt('Đã đóng dư ' + money(R.credit) + ', sẽ trừ vào tháng sau.', 70, y, '700 24px ' + BODY, '#1E8A63'); y += 44; }
+    // QR
+    if (D.qr) {
+      var q = new window.QRCodeLib(-1, window.QRErrorCorrectLevel.M); q.addData(D.qr); q.make(); var n = q.getModuleCount(), m = Math.floor(320 / (n + 6)), sz = m * (n + 6);
+      rr(50, y, W - 100, sz + 40, 30, '#FFFFFF', '#F2DDE3', 3); c.fillStyle = '#fff'; c.fillRect(70, y + 20, sz, sz); c.fillStyle = '#000';
+      for (var r = 0; r < n; r++) for (var k = 0; k < n; k++) if (q.isDark(r, k)) c.fillRect(70 + (k + 3) * m, y + 20 + (r + 3) * m, m, m);
+      var tx = 420, ty = y + 80; txt(B.bank, tx, ty, '800 34px ' + HEAD, INK); ty += 46; txt(B.holder, tx, ty, '700 28px ' + BODY, INK); ty += 50;
+      if (B.amt) { txt('Số tiền: ' + money(R.total), tx, ty, '800 28px ' + BODY, '#C93A6C'); ty += 44; }
+      txt('Nội dung: ' + D.pn, tx, ty, '700 26px ' + BODY, INK); ty += 50;
+      c.font = '600 22px ' + BODY; wrap(B.amt ? 'Quét mã bằng app ngân hàng – số tiền và nội dung đã điền sẵn.' : 'Quét mã bằng app ngân hàng.', W - tx - 80).forEach(function (t, i) { txt(t, tx, ty + i * 30, '600 22px ' + BODY, INK2); });
+      y += sz + 80;
+    }
+    if (D.comment.trim()) {
+      c.font = '600 26px ' + BODY; var cl2 = wrap(D.comment.trim(), W - 180);
+      rr(50, y, W - 100, 80 + cl2.length * 36, 26, '#FFFDF3', '#FFE494', 3); txt('Nhận xét của cô', 80, y + 48, '800 28px ' + HEAD, '#8A6200');
+      cl2.forEach(function (t, i) { txt(t, 80, y + 92 + i * 36, '600 26px ' + BODY, INK); }); y += 110 + cl2.length * 36;
+    }
+    txt('Cảm ơn phụ huynh đã đồng hành cùng con! 💛', W / 2, y + 20, '800 28px ' + HEAD, '#C93A6C', 'center'); y += 60;
+    var out = document.createElement('canvas'); out.width = W; out.height = y; var oc = out.getContext('2d'); oc.fillStyle = '#fff'; oc.fillRect(0, 0, W, y); oc.drawImage(cv, 0, 0);
+    oc.strokeStyle = ACC; oc.lineWidth = 12; oc.strokeRect(6, 6, W - 12, y - 12);
+    return out;
   }
   function saveImg(sid, ym) {
-    var el = document.getElementById('rp-' + sid), x = stuOf(sid); if (!el || !x) return;
-    toast('Đang tạo ảnh…'); el.classList.add('snap');
-    loadH2C().then(function (h2c) { return h2c(el, { scale: 2, backgroundColor: '#ffffff', useCORS: true }); }).then(function (cv) {
-      el.classList.remove('snap');
-      var name = 'phieu-' + (x.st.user || uname(x.st.name)) + '-' + ym + '.png';
+    var x = stuOf(sid); if (!x) return;
+    var ready = document.fonts && document.fonts.load ? Promise.all([document.fonts.load('800 40px "Mali"'), document.fonts.load('700 24px "Quicksand"')]).catch(function () {}) : Promise.resolve();
+    toast('Đang tạo ảnh…');
+    ready.then(function () {
+      var cv = drawPhieu(x.cl, x.st, ym), name = 'phieu-' + (x.st.user || uname(x.st.name)) + '-' + ym + '.png';
       cv.toBlob(function (blob) {
-        var file = typeof File !== 'undefined' ? new File([blob], name, { type: 'image/png' }) : null;
-        if (file && navigator.canShare && navigator.canShare({ files: [file] })) { navigator.share({ files: [file], title: name }).catch(function () {}); return; }
-        var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); toast('Đã tải ảnh ' + name);
+        if (!blob) { toast('Không tạo được ảnh.'); return; }
+        var file = null; try { file = new File([blob], name, { type: 'image/png' }); } catch (e) {}
+        var mobile = /iPhone|iPad|Android/i.test(navigator.userAgent);
+        if (mobile && file && navigator.canShare && navigator.canShare({ files: [file] })) { navigator.share({ files: [file], title: 'Phiếu báo ' + x.st.name }).catch(function () {}); return; }
+        var url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+        modal('<h2>✅ Đã tải ảnh phiếu</h2><p class="muted">Tệp <b>' + esc(name) + '</b> đã lưu vào thư mục Tải về. Cô gửi ảnh này qua Zalo cho phụ huynh.</p><img src="' + url + '" alt="Phiếu báo ' + esc(x.st.name) + '" style="width:100%;border-radius:14px;border:2px solid var(--line)">');
       }, 'image/png');
-    }, function () { el.classList.remove('snap'); toast('Chưa tạo được ảnh (cần mạng). Cô chụp màn hình phiếu hoặc bấm In / Lưu PDF.'); });
+    });
   }
   function copy(text) {
     function fb() { var ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch (e) {} ta.remove(); toast('Đã sao chép'); }
@@ -454,6 +584,9 @@
     if (a === 'lp-seen') { var sv = store.get('ln_seed_v', {}); sv.seen = true; store.set('ln_seed_v', sv); return refresh(); }
     if (a === 'lp-copytxt') return copy(t.getAttribute('data-t'));
     if (a === 'lp-addsess') return addSessModal(cid);
+    if (a === 'lp-sched') return schedModal(cid);
+    if (a === 'lp-paidck') { ev.preventDefault(); return paidModal(sid, ym); }
+    if (a === 'lp-unpaid') { var P0 = pays(); P0[sid] = (P0[sid] || []).filter(function (p) { return p.id !== t.getAttribute('data-id'); }); store.set('ln_pay', P0); closeModal(); toast('Đã bỏ đánh dấu'); return refresh(); }
     if (a === 'lp-addst') return addStuModal(cid);
     if (a === 'lp-cell') {
       var cd = cdata(cid), r = cd.att[key] = cd.att[key] || {}, v = r[sid], nv = v == null ? 1 : v === 1 ? 0 : v === 0 ? 2 : null;
@@ -515,8 +648,13 @@
     }
   };
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });
+  document.addEventListener('focusout', function (e) {
+    var el = e.target; if (!el || !el.classList || !el.classList.contains('rp-note')) return;
+    var x = stuOf(el.getAttribute('data-s')); if (!x) return; var v = el.innerText.trim();
+    if (v !== (store.get(noteKey(x.st), '') || '')) { store.set(noteKey(x.st), v); toast('Đã lưu nhận xét'); }
+  });
   window.addEventListener('hashchange', function () { closeModal(); });
 
-  LN.lop = { viewHome: viewHome, viewClass: viewClass, viewHocPhi: viewHocPhi, viewPhieu: viewPhieu, viewSettings: viewSettings, runSeed: runSeed, report: report, stuOf: stuOf, msgText: msgText,
+  LN.lop = { byUser: byUser, phieuOfUser: function (un) { var x = byUser(un); if (x) LN.go('#/admin/phieu/' + x.cl.id + '/' + K.ymOf(today()) + '/' + x.st.id); }, viewHome: viewHome, viewClass: viewClass, viewHocPhi: viewHocPhi, viewPhieu: viewPhieu, viewSettings: viewSettings, runSeed: runSeed, report: report, stuOf: stuOf, msgText: msgText,
     viewLich: viewHome, viewLop: viewHome, viewStudent: function (sid) { viewHome(); if (sid) stuModal(sid); } };
 })();
