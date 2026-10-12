@@ -1688,6 +1688,15 @@ table.sh { border-collapse: separate; border-spacing: 0; font-size: 14px; width:
 .rp-learn b { font-family: Mali, sans-serif; font-size: 20px; color: #2E7CC0; } .rp-learn span { font-size: 12px; color: var(--ink2); font-weight: 700; }
 .rp-learn { grid-template-columns: repeat(4, minmax(0, 1fr)); } .rp-learn b { font-size: 18px; } @media (max-width: 420px) { .rp-learn { grid-template-columns: repeat(2, 1fr); } }
 .lp-noscroll .cloudst { display: none; }
+/* chế độ giáo viên học thử & sửa bài */
+.gvbar { background: #FFF1C9; border-bottom: 2px solid var(--yel-mid); font-size: 14px; position: relative; z-index: 30; }
+.gvbar .wrap { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-top: 8px; padding-bottom: 8px; }
+.gvbar span { flex: 1 1 260px; } .gvbar label { display: flex; align-items: center; gap: 6px; font-weight: 800; } .gvbar .sel { width: auto; min-height: 38px; padding: 4px 10px; }
+.gvtools { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; background: #FFF8E1; border: 2px dashed var(--yel-mid); border-radius: 16px; padding: 8px 10px; margin-bottom: 12px; font-size: 14px; font-weight: 800; }
+.gv-o { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; } .gv-o input[type=radio] { width: 22px; height: 22px; accent-color: var(--mint); flex: none; }
+.gv-acts { margin-top: 12px; }
+.bt-g { display: flex; gap: 10px; flex-wrap: wrap; }
+.bt-ex { border-top: 2px solid var(--line); padding: 10px 0; } .bt-ex h3 { margin: 0 0 6px; font-size: 16px; } .bt-ex ul { margin: 0; padding-left: 20px; } .bt-ex li { margin: 6px 0; font-size: 14px; }
 
 /* ===================== Đại chiến quái vật (monster) ===================== */
 .monster-wrap { max-width: 820px; }
@@ -2041,19 +2050,19 @@ table.sh { border-collapse: separate; border-spacing: 0; font-size: 14px; width:
 <script src="js/grammar_data.js?v=73e60e5a" onerror="__lnErr(this.src)"></script>
 <script src="js/explain4.js?v=fbce3e67" onerror="__lnErr(this.src)"></script>
 <script src="js/art.js?v=bbf5baf7" onerror="__lnErr(this.src)"></script>
-<script src="js/app.js?v=34d31c95" onerror="__lnErr(this.src)"></script>
+<script src="js/app.js?v=c5be1159" onerror="__lnErr(this.src)"></script>
 <script src="js/games.js?v=034fd0d0" onerror="__lnErr(this.src)"></script>
 <script src="js/games_a.js?v=fee8a804" onerror="__lnErr(this.src)"></script>
 <script src="js/games_b.js?v=e92d6ae3" onerror="__lnErr(this.src)"></script>
 <script src="js/ai_prompts.js?v=888af3f0" onerror="__lnErr(this.src)"></script>
 <script src="js/ai.js?v=2a2d5128" onerror="__lnErr(this.src)"></script>
-<script src="js/cloud.js?v=d03571ce" onerror="__lnErr(this.src)"></script>
+<script src="js/cloud.js?v=2110a252" onerror="__lnErr(this.src)"></script>
 <script src="js/importer.js?v=61229f68" onerror="__lnErr(this.src)"></script>
-<script src="js/admin.js?v=3d50d2e0" onerror="__lnErr(this.src)"></script>
+<script src="js/admin.js?v=d8cb266c" onerror="__lnErr(this.src)"></script>
 <script src="js/qr_lib.js?v=9fc6651e" onerror="__lnErr(this.src)"></script>
 <script src="js/lop_core.js?v=f6d88625" onerror="__lnErr(this.src)"></script>
 <script src="js/lop_seed.js?v=75f3f55b" onerror="__lnErr(this.src)"></script>
-<script src="js/admin_lop.js?v=fdd1f4a2" onerror="__lnErr(this.src)"></script>
+<script src="js/admin_lop.js?v=32c1f26c" onerror="__lnErr(this.src)"></script>
 <script>
 window.LN.boot();window.__lnOk=1;
 </script>
