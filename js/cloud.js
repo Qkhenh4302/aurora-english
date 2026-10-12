@@ -5,7 +5,7 @@
 (function () {
   var LN = window.LN, store = LN.store;
   var C = LN.cloud = { on: false, checked: false, boardList: null, state: 'idle' };
-  var SHARED = /^ln_(users|admin|teachers|class|att|fees|imports|grammar|grammar_del|grammar_v|classes|pay|bank|seed_done|seed_v|note_[a-z0-9_]{1,40}|cl_[a-z0-9_-]{1,40})$/, PROG = /^ln_prog_([a-z0-9_]{1,40})$/;
+  var SHARED = /^ln_(users|admin|teachers|class|att|fees|imports|grammar|grammar_del|grammar_v|classes|pay|bank|exedit|seed_done|seed_v|note_[a-z0-9_]{1,40}|cl_[a-z0-9_-]{1,40})$/, PROG = /^ln_prog_([a-z0-9_]{1,40})$/;
   var raw = { set: store.set, del: store.del }, QUIET = 0;
   function quiet(fn) { QUIET++; try { fn(); } finally { QUIET--; } }
   function same(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
@@ -57,7 +57,7 @@
     var u = store.get('ln_session', null);
     // máy có phiên giáo viên: xếp hàng gửi (kể cả khi phiên hết hạn – đăng nhập lại sẽ gửi tiếp, không bỏ)
     if (hasAdm() && (SHARED.test(k) || (PROG.test(k) && k !== 'ln_prog_' + u))) { var q = Q(); q.keys[k] = 1; setQ(q); badge('wait'); schedule(); return; }
-    if (stuTok() && u && k === 'ln_prog_' + u) { var q2 = Q(); q2.prog = true; setQ(q2); badge('wait'); schedule(3000); }
+    if (stuTok() && u && u !== '__gv' && k === 'ln_prog_' + u) { var q2 = Q(); q2.prog = true; setQ(q2); badge('wait'); schedule(3000); }
   }
   store.set = function (k, v) { raw.set.call(store, k, v); onChange(k); };
   store.del = function (k) { raw.del.call(store, k); onChange(k); };
@@ -140,7 +140,7 @@
       gone.forEach(function (k) { if (true) { delete B[k]; if (store.get(k, null) != null) { raw.del.call(store, k); changed = true; } } });
       if (firstLogin) store.keys().forEach(function (k) { if (SHARED.test(k) && !(k in sk) && !(k in B) && store.get(k, null) != null) push.push(k); });
       if (!Object.keys(sk).length) store.keys().forEach(function (k) { if (SHARED.test(k) && store.get(k, null) != null && push.indexOf(k) < 0) { delete B[k]; push.push(k); } });   // máy chủ trống: đưa dữ liệu của máy này lên lại
-      var local = {}; store.keys().forEach(function (k) { var m = k.match(PROG); if (m) local[m[1]] = 1; });
+      var local = {}; store.keys().forEach(function (k) { var m = k.match(PROG); if (m && m[1] !== '__gv') local[m[1]] = 1; });
       Object.keys(d.progs || {}).forEach(function (u) {
         var sv = d.progs[u], lv = store.get('ln_prog_' + u, null);
         if (q.keys['ln_prog_' + u]) return;
@@ -203,7 +203,7 @@
       wrapAdmin();
       var jobs = [api('public').then(function (pub) {
         quiet(function () {
-          ['ln_imports', 'ln_grammar', 'ln_grammar_del', 'ln_grammar_v'].forEach(function (k) { if (pub[k] != null && !admTok()) raw.set.call(store, k, pub[k]); });
+          ['ln_imports', 'ln_grammar', 'ln_grammar_del', 'ln_grammar_v', 'ln_exedit'].forEach(function (k) { if (pub[k] != null && !admTok()) raw.set.call(store, k, pub[k]); });
           if (pub.ln_class && !admTok()) raw.set.call(store, 'ln_class', Object.assign({}, store.get('ln_class', {}) || {}, pub.ln_class));
         });
       }, function () {})];

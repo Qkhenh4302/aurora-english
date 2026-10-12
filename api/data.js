@@ -7,8 +7,8 @@ const TOK = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKE
 const P = 'ae:';
 const OWNER = 'quyenntnna', OWNER_DEF_HASH = '2f121mm50j6';
 // Khoá dữ liệu chung của lớp (giáo viên ghi), dữ liệu công khai cho học sinh đọc
-const SHARED = /^ln_(users|admin|teachers|class|att|fees|imports|grammar|grammar_del|grammar_v|classes|pay|bank|seed_done|seed_v|note_[a-z0-9_]{1,40}|cl_[a-z0-9_-]{1,40})$/;
-const PUBLIC = ['ln_imports', 'ln_grammar', 'ln_grammar_del', 'ln_grammar_v'];
+const SHARED = /^ln_(users|admin|teachers|class|att|fees|imports|grammar|grammar_del|grammar_v|classes|pay|bank|exedit|seed_done|seed_v|note_[a-z0-9_]{1,40}|cl_[a-z0-9_-]{1,40})$/;
+const PUBLIC = ['ln_imports', 'ln_grammar', 'ln_grammar_del', 'ln_grammar_v', 'ln_exedit'];
 
 /* Gộp 3 chiều: base = bản máy đã lấy về lần trước, local = bản máy gửi lên, remote = bản đang có trên mạng.
    Hai máy sửa chỗ khác nhau thì giữ cả hai; cùng sửa một chỗ thì bản mới gửi lên thắng.

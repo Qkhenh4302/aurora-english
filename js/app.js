@@ -564,7 +564,13 @@
   LN.practiceFor = function (tid) { return Object.keys(EX).filter(function (k) { return EX[k].gp && EX[k].ex.topic === tid; }).map(function (k) { return EX[k].ex; }); };
   LN.importsFor = function (tid) { return Object.keys(EX).filter(function (k) { return EX[k].imp && EX[k].ex.topic === tid; }).map(function (k) { return EX[k].ex; }); };
   var REVIEWS = LN.REVIEWS = window.REVIEWS4;
-  function itemCount(e) { return e.type === 'match' ? e.left.length : e.items.length; }
+  /* Giáo viên sửa / xoá câu hỏi: ln_exedit = { exId: { hide, items: { idx: { hide, q, o, a, w } } } } (đồng bộ cho mọi học sinh) */
+  var exEdits = LN.exEdits = function () { return store.get('ln_exedit', {}) || {}; };
+  function exHidden(e) { var d = exEdits()[e.id]; return !!(d && d.hide); }
+  function itemHidden(exId, i) { var d = exEdits()[exId]; return !!(d && (d.hide || (d.items && d.items[i] && d.items[i].hide))); }
+  LN.exHidden = exHidden; LN.itemHidden = itemHidden;
+  var exList = LN.exList = function (u) { return u.exercises.filter(function (e) { return !exHidden(e); }); };
+  function itemCount(e) { var n = e.type === 'match' ? e.left.length : e.items.length, c = 0; for (var i = 0; i < n; i++) if (!itemHidden(e.id, i)) c++; return c; }
   LN.itemCount = itemCount;
 
   /* Ngữ pháp: nội dung mặc định + chỉnh sửa của giáo viên (lưu ln_grammar). Có bộ nhớ đệm vì nội dung lớn. */
@@ -609,7 +615,12 @@
 
   /* ================= Tài khoản & tiến độ ================= */
   var users = LN.users = function () { return store.get('ln_users', {}); };
-  var me = LN.me = function () { var u = store.get('ln_session', null); var all = users(); return u && all[u] ? Object.assign({ username: u }, all[u]) : null; };
+  var isGv = LN.isGv = function () { return store.get('ln_session', null) === '__gv' && !!store.get('ln_admin_session', null); };
+  var me = LN.me = function () {
+    var u = store.get('ln_session', null);
+    if (u === '__gv') return isGv() ? { username: '__gv', name: 'Cô giáo', grade: +store.get('ln_gv_grade', 4) || 4, gv: true, status: 'active' } : null;
+    var all = users(); return u && all[u] ? Object.assign({ username: u }, all[u]) : null;
+  };
   var progOf = LN.progOf = function (username) {
     var p = store.get('ln_prog_' + username, null) || {};
     ['seen', 'ex', 'mistakes', 'days', 'topics', 'games', 'vlearn'].forEach(function (k) { p[k] = p[k] || {}; });
@@ -626,7 +637,7 @@
       { key: 'pattern', label: 'Học mẫu câu', tab: 'pattern', done: !!p.seen['p' + u.n] }
     ];
     if (u.speaking && u.speaking.length) s.push({ key: 'speak', label: 'Luyện nói', tab: 'speak', done: !!(p.games[u.n] || {}).speakq });
-    u.exercises.forEach(function (e) { var r = p.ex[e.id]; s.push({ key: e.id, label: e.title, ex: e, done: !!r, best: r ? r.best : null }); });
+    exList(u).forEach(function (e) { var r = p.ex[e.id]; s.push({ key: e.id, label: e.title, ex: e, done: !!r, best: r ? r.best : null }); });
     return s;
   };
   var unitStat = LN.unitStat = function (u, p) {
@@ -638,18 +649,21 @@
   function nextStep(u, p) { var s = unitSteps(u, p); for (var i = 0; i < s.length; i++) if (!s[i].done) return s[i]; return null; }
   function stepHref(u, st) { if (!st) return '#/unit/' + u.n + '/practice'; return st.ex ? '#/ex/' + st.ex.id : '#/unit/' + u.n + '/' + st.tab; }
   var streak = LN.streak = function (p) { var n = 0, d = new Date(); if (!p.days[dayKey(d)]) d.setDate(d.getDate() - 1); while (p.days[dayKey(d)]) { n++; d.setDate(d.getDate() - 1); } return n; };
-  var openMistakes = LN.openMistakes = function (p) { return Object.keys(p.mistakes).map(function (k) { return Object.assign({ key: k }, p.mistakes[k]); }).filter(function (m) { return EX[m.exId]; }); };
+  var openMistakes = LN.openMistakes = function (p) { return Object.keys(p.mistakes).map(function (k) { return Object.assign({ key: k }, p.mistakes[k]); }).filter(function (m) { return EX[m.exId] && !itemHidden(m.exId, m.idx); }); };
   var GOAL = 20;
 
   /* ================= Câu hỏi ================= */
   var itemFrom = LN.itemFrom = function (exId, idx) {
     var r = EX[exId]; if (!r) return null; var e = r.ex;
+    if (itemHidden(exId, idx)) return null;
     if (e.type === 'match') {
       var others = e.right.filter(function (_, j) { return j !== e.a[idx]; });
       var o = shuffle([e.right[e.a[idx]]].concat(shuffle(others).slice(0, 3)));
       return { type: 'mcq', q: e.left[idx], o: o, a: o.indexOf(e.right[e.a[idx]]), src: { exId: exId, idx: idx }, kind: 'Chọn câu trả lời hợp' };
     }
     var it = e.items[idx]; if (!it) return null;
+    var ov = (exEdits()[exId] || {}).items; ov = ov && ov[idx];
+    if (ov && !e.gen) { it = Object.assign({}, it); ['q', 'o', 'a', 'w'].forEach(function (k) { if (ov[k] != null) it[k] = ov[k]; }); }
     return Object.assign({}, it, { type: it.type || e.type, bank: e.bank, prefill: e.type === 'fix' && /^Tìm lỗi/.test(e.title), src: { exId: exId, idx: idx } });
   };
   /* Dịch + giải thích cho câu làm sai */
@@ -682,16 +696,17 @@
     var r = EX[id];
     if (r) {
       var e = r.ex, u = r.unit, rd = [];
-      if (!u) return { id: id, exId: id, title: e.title, sub: 'Ngữ pháp tổng hợp · ' + topicName(e.topic), back: '#/grammar/' + e.topic, readings: [], items: e.items.map(function (_, i) { return itemFrom(id, i); }) };
+      if (exHidden(e)) return null;
+      if (!u) return { id: id, exId: id, title: e.title, sub: 'Ngữ pháp tổng hợp · ' + topicName(e.topic), back: '#/grammar/' + e.topic, readings: [], items: e.items.map(function (_, i) { return itemFrom(id, i); }).filter(Boolean) };
       if (e.reading === 'all') rd = u.readings; else if (typeof e.reading === 'number' && u.readings[e.reading]) rd = [u.readings[e.reading]];
       if (e.gen === 'vocab') e.items = vocabItems(u.vocab); else if (e.gen === 'vocab1') e.items = vocabItems1(u.vocab);
       var base = { id: id, exId: id, title: e.title, sub: 'Unit ' + u.n + ' · ' + u.title, back: '#/unit/' + u.n + '/practice', readings: rd, intro: e.intro, bank: e.bank, unit: u.n };
       if (e.type === 'match') return Object.assign(base, { match: e, items: [] });
-      return Object.assign(base, { items: e.items.map(function (_, i) { return itemFrom(id, i); }) });
+      return Object.assign(base, { items: e.items.map(function (_, i) { return itemFrom(id, i); }).filter(Boolean) });
     }
     function poolFrom(filter) {
       var pool = [];
-      Object.keys(EX).forEach(function (k) { var x = EX[k]; if (!filter(x)) return; for (var i = 0; i < itemCount(x.ex); i++) pool.push([k, i]); });
+      Object.keys(EX).forEach(function (k) { var x = EX[k]; if (!filter(x)) return; var nI = x.ex.type === 'match' ? x.ex.left.length : x.ex.items.length; for (var i = 0; i < nI; i++) if (!itemHidden(k, i)) pool.push([k, i]); });
       return pool;
     }
     if (id.indexOf('topic-') === 0) {
@@ -745,7 +760,7 @@
     if (!u) return '<header class="topbar"><div class="wrap"><a class="brand" href="#/">' + logo(40) + BRAND + '</a><div class="tr"><a class="btn btn-sm btn-pink" href="#/auth/login">Đăng nhập</a></div></div></header>';
     var p = prog(), mc = openMistakes(p).length, st = settings();
     function nl(id, href, icon, label, extra) { return '<a href="' + href + '" class="' + (active === id ? 'on' : '') + '">' + cic(icon, 26) + '<span>' + label + '</span>' + (extra || '') + '</a>'; }
-    return '<header class="topbar"><div class="wrap"><a class="brand" href="#/home">' + logo(40) + BRAND + '</a>' +
+    return gvBar() + '<header class="topbar"><div class="wrap"><a class="brand" href="#/home">' + logo(40) + BRAND + '</a>' +
       '<nav class="nav" aria-label="Chính">' + nl('home', '#/home', 'home', 'Trang chủ') + nl('learn', '#/learn', 'learn', 'Bài học') + nl('games', '#/games', 'games', 'Trò chơi') +
       nl('grammar', '#/grammar', 'grammar', 'Ngữ pháp') + nl('mistakes', '#/mistakes', 'heal', 'Ôn câu sai', mc ? '<span class="cnt">' + mc + '</span>' : '') + nl('ai', '#/ai', 'ai', 'Hỏi Chíp') + '</nav>' +
       '<div class="tr"><span class="pillstat ps-star" title="Sao đã thu thập">' + cic('star', 24) + '<b>' + p.stars + '</b></span><span class="pillstat ps-fire" title="Số ngày học liên tiếp">' + cic('fire', 24) + '<b>' + streak(p) + '</b></span>' +
@@ -755,6 +770,15 @@
       '<button class="ibtn sm" data-act="logout" aria-label="Thoát" title="Thoát">' + cic('out', 24) + '</button></div></div></header>';
   }
   LN.header = header;
+  var GVG = [[1, 'Lớp 1'], [2, 'Lớp 2'], [3, 'Lớp 3'], [4, 'Lớp 4'], [101, 'Everybody Up 1'], [102, 'Everybody Up 2']];
+  LN.GVG = GVG;
+  function gvBar() {
+    if (!isGv()) return '';
+    var g = me().grade;
+    return '<div class="gvbar"><div class="wrap"><span>👩‍🏫 <b>Cô đang học thử</b> – làm được mọi bài, tiến độ không tính cho học sinh.</span><label>Khối <select class="sel" data-gvgrade aria-label="Chọn khối">' + GVG.map(function (x) { return '<option value="' + x[0] + '"' + (x[0] === g ? ' selected' : '') + '>' + x[1] + '</option>'; }).join('') + '</select></label>' +
+      '<a class="btn btn-sm" href="#/admin/baitap">Bài đã sửa/xoá</a><button class="btn btn-sm btn-pink" data-act="gv-exit">Về khu giáo viên</button></div></div>';
+  }
+  LN.gvBar = gvBar;
   function footer() { return '<footer class="foot"><div class="wrap"><span>' + logo(22) + ' <b>Aurora English</b> · Tiếng Anh · Global Success &amp; Everybody Up · ' + (LN.cloud && LN.cloud.on ? '☁️ Dữ liệu được lưu trên mạng' : 'Dữ liệu lưu trong trình duyệt này') + '</span><a href="#/admin">Giáo viên đăng nhập</a></div></footer>'; }
 
   LN.footer = footer;
@@ -1169,7 +1193,7 @@
     } else {
       var ICO = { vocab: ['🔤', 'var(--mint-soft)'], reading: ['📖', 'var(--yel-soft)'] };
       var GRP = { vocab: '🔤 Từ vựng', btbt: '📒 Bài tập bổ trợ', test: '📝 Bài kiểm tra · 20 câu' }, lastG = null;
-      body = '<div class="stack" style="gap:12px">' + u.exercises.map(function (e) {
+      body = '<div class="stack" style="gap:12px">' + exList(u).map(function (e) {
         var hd = ''; if (e.group && e.group !== lastG) { lastG = e.group; hd = '<h3 class="exgrp">' + (GRP[e.group] || '') + '</h3>'; }
         var r = p.ex[e.id], icn = ICO[e.topic] || { mcq: ['✅', 'var(--sky-soft)'], fill: ['✏️', 'var(--pink-soft)'], order: ['🧩', 'var(--lav-soft)'], fix: ['🔍', 'var(--peach-soft)'], match: ['🔗', 'var(--yel-soft)'] }[e.type];
         if (EXICO[e.topic] && !ICO[e.topic]) icn = [EXICO[e.topic][0], EXICO[e.topic][1]];
@@ -1207,7 +1231,7 @@
   function setProgress(x) { var tot = x.match ? x.match.left.length : x.items.length, d = x.phase === 'done' ? tot : x.match ? Object.keys(x.pairs).length : x.i + (x.phase === 'ask' ? 0 : 1); return { d: d, tot: tot }; }
   function taskPanel() {
     var r = S.exId && EX[S.exId]; if (!r || !r.unit) return '';
-    var u = r.unit, p = prog(), list = u.exercises, doneN = list.filter(function (e) { return p.ex[e.id]; }).length;
+    var u = r.unit, p = prog(), list = exList(u), doneN = list.filter(function (e) { return p.ex[e.id]; }).length;
     return '<div class="tk-h"><p class="tk-k">' + u.icon + ' Unit ' + u.n + ' · Luyện tập</p><p class="tk-u">' + esc(u.title) + '</p><div class="tk-sum"><div class="bar thin"><i style="width:' + pct(doneN, list.length) + '%"></i></div><span>' + doneN + '/' + list.length + ' bài</span></div></div>' +
       '<nav class="tk-list" aria-label="Các bài tập">' + list.map(function (e, k) {
         var ico = exIcon(e), cur = e.id === S.exId, best = p.ex[e.id], cache = PLAYCACHE[e.id], tot = itemCount(e), pr, meta, cls = '';
@@ -1227,12 +1251,71 @@
     if (S.phase !== 'done' && S.readings && S.readings.length) side = '<aside class="passw">' + S.readings.map(function (r) { return '<div class="passage" style="margin-bottom:12px"><div class="chead" style="margin-bottom:8px"><h3>📖 ' + esc(r.title) + '</h3><button class="btn btn-sm" data-say="' + esc(r.text) + '">' + ic('sound', 16) + 'Nghe</button></div><p class="txt">' + esc(r.text) + '</p></div>'; }).join('') + '</aside>';
     else if (S.phase !== 'done' && S.intro) side = '<aside class="passw"><div class="passage"><div class="chead" style="margin-bottom:8px"><h3>📖 Đọc đoạn văn</h3><button class="btn btn-sm" data-say="' + esc(S.intro) + '">' + ic('sound', 16) + 'Nghe</button></div><p class="txt">' + esc(S.intro) + '</p></div></aside>';
     var tasks = taskPanel();
-    app.innerHTML = topBar(S.back, S.title, S.sub, doneN / total, S.match || S.phase === 'done' ? '' : '<span class="tag tag-yel" style="font-size:14px">' + (S.i + 1) + ' / ' + total + '</span>') +
+    if (isGv() && S.phase !== 'done' && S.exId && EX[S.exId]) main = gvTools() + main;
+    app.innerHTML = gvBar() + topBar(S.back, S.title, S.sub, doneN / total, S.match || S.phase === 'done' ? '' : '<span class="tag tag-yel" style="font-size:14px">' + (S.i + 1) + ' / ' + total + '</span>') +
       '<main class="wrap page pwrap' + (tasks ? ' wide' : '') + '"><div class="playgrid' + (tasks ? ' has-tasks' : '') + (side ? ' has-side' : '') + '">' + (tasks ? '<aside class="tasks">' + tasks + '</aside>' : '') + '<div class="pmain">' + main + '</div>' + side + '</div></main>';
     document.body.classList.remove('in-game');
     var inp = document.getElementById('ans'); if (inp && S.phase === 'ask') { inp.focus(); var v = inp.value; inp.value = ''; inp.value = v; }
     var cit = S.phase === 'ask' && !S.match && S.items[S.i];
     if (cit && cit.listen && S.heardAt !== S.i) { S.heardAt = S.i; setTimeout(function () { if (S && S.items[S.i] === cit) speak(cit.listen); }, 380); }
+  }
+  function gvTools() {
+    var e = EX[S.exId].ex, it = !S.match && S.items[S.i], canItem = it && it.src && !e.gen;
+    return '<div class="gvtools"><span>👩‍🏫 Sửa bài:</span>' + (canItem ? '<button type="button" class="btn btn-sm" data-act="gv-edit">✏️ Sửa câu này</button><button type="button" class="btn btn-sm" data-act="gv-del">🗑 Xoá câu này</button>' : it && it.src ? '<button type="button" class="btn btn-sm" data-act="gv-del">🗑 Xoá câu này</button>' : '') +
+      '<button type="button" class="btn btn-sm" data-act="gv-hideex">🚫 Ẩn cả bài “' + esc(e.title) + '”</button></div>';
+  }
+  function gvModal(html) {
+    var m = document.getElementById('lp-modal'); if (m) m.remove();
+    m = document.createElement('div'); m.className = 'lp-modal'; m.id = 'lp-modal';
+    m.innerHTML = '<div class="lp-sheet wide" role="dialog" aria-modal="true"><button class="lp-x" data-act="gv-close" aria-label="Đóng">✕</button>' + html + '</div>';
+    m.addEventListener('click', function (e) { if (e.target === m) m.remove(); }); document.body.appendChild(m); return m;
+  }
+  function saveEdit(exId, idx, patch) {
+    var all = exEdits(), d = all[exId] = all[exId] || {}; d.items = d.items || {};
+    if (idx == null) Object.assign(d, patch); else d.items[idx] = Object.assign({}, d.items[idx] || {}, patch);
+    d.at = Date.now(); store.set('ln_exedit', all);
+  }
+  LN.saveExEdit = saveEdit;
+  function gvEdit() {
+    var it = S.items[S.i], src = it.src, e = EX[src.exId].ex, orig = e.items[src.idx], cur = itemFrom(src.exId, src.idx), t = cur.type;
+    var h = '<h2>✏️ Sửa câu hỏi</h2><p class="muted small">' + esc(e.title) + ' · câu gốc số ' + (src.idx + 1) + '. Sửa xong lưu lại – mọi học sinh thấy ngay bản mới.</p><form id="gv-f">';
+    if (t === 'order') h += '<div class="field"><label for="gv-w">Các từ để sắp xếp (cách nhau bằng dấu /)</label><input class="inp" id="gv-w" value="' + esc(cur.w || '') + '"></div>';
+    else h += '<div class="field"><label for="gv-q">Câu hỏi (dùng ___ cho chỗ trống)</label><textarea class="inp" id="gv-q" rows="2">' + esc(cur.q || '') + '</textarea></div>';
+    if (t === 'mcq') h += '<div class="field"><label>Các đáp án – chọn ô tròn ở đáp án đúng</label>' + cur.o.map(function (o, k) { return '<div class="gv-o"><input type="radio" name="gv-a" value="' + k + '"' + (k === cur.a ? ' checked' : '') + ' aria-label="Đáp án đúng"><input class="inp" data-o="' + k + '" value="' + esc(o) + '"></div>'; }).join('') + '</div>';
+    else h += '<div class="field"><label for="gv-a">Đáp án đúng (mỗi dòng một cách viết được chấp nhận)</label><textarea class="inp" id="gv-a" rows="3">' + esc((cur.a || []).join('\n')) + '</textarea></div>';
+    h += '<div class="gv-acts"><button class="btn btn-pink" type="submit">Lưu thay đổi</button>' + ((exEdits()[src.exId] || {}).items && exEdits()[src.exId].items[src.idx] ? ' <button class="btn" type="button" data-act="gv-orig">↺ Trả về câu gốc</button>' : '') + '</div></form>';
+    var m = gvModal(h), f = m.querySelector('#gv-f');
+    f.addEventListener('submit', function (ev) {
+      ev.preventDefault(); var patch = {};
+      if (t === 'order') { var w = f.querySelector('#gv-w').value.trim(); if (!w) return; patch.w = w; }
+      else { var q = f.querySelector('#gv-q').value.trim(); if (!q && orig.q) return toast('Câu hỏi không được để trống.'); patch.q = q; }
+      if (t === 'mcq') {
+        var os = [].slice.call(f.querySelectorAll('[data-o]')).map(function (x) { return x.value.trim(); }), a = +((f.querySelector('[name=gv-a]:checked') || {}).value || 0);
+        if (os.some(function (x) { return !x; })) return toast('Đáp án không được để trống.');
+        patch.o = os; patch.a = a;
+      } else {
+        var as = f.querySelector('#gv-a').value.split('\n').map(function (x) { return x.trim(); }).filter(Boolean); if (!as.length) return toast('Cần ít nhất một đáp án đúng.');
+        patch.a = as;
+      }
+      saveEdit(src.exId, src.idx, patch); m.remove(); toast('Đã lưu câu hỏi');
+      S.items[S.i] = itemFrom(src.exId, src.idx); S.phase = 'ask'; S.sel = null; S.typed = ''; S.built = []; S.res[S.i] = undefined; drawPlay();
+    });
+    var ob = m.querySelector('[data-act=gv-orig]');
+    if (ob) ob.addEventListener('click', function () { var all = exEdits(); if (all[src.exId] && all[src.exId].items) { delete all[src.exId].items[src.idx]; store.set('ln_exedit', all); } m.remove(); toast('Đã trả về câu gốc'); S.items[S.i] = itemFrom(src.exId, src.idx); S.phase = 'ask'; S.sel = null; S.res[S.i] = undefined; drawPlay(); });
+  }
+  function gvDel() {
+    var it = S.items[S.i], src = it.src;
+    if (!confirm('Xoá câu này khỏi bài? Học sinh sẽ không thấy câu này nữa (khôi phục được ở Khu giáo viên → Làm bài & sửa bài).')) return;
+    saveEdit(src.exId, src.idx, { hide: true }); toast('Đã xoá câu');
+    S.items.splice(S.i, 1); S.res.splice(S.i, 1);
+    if (!S.items.length) { go(S.back); return; }
+    if (S.i >= S.items.length) S.i = S.items.length - 1;
+    S.phase = 'ask'; S.sel = null; S.typed = ''; S.built = []; drawPlay();
+  }
+  function gvHideEx() {
+    var e = EX[S.exId].ex;
+    if (!confirm('Ẩn cả bài “' + e.title + '”? Học sinh sẽ không thấy bài này nữa (khôi phục được ở Khu giáo viên).')) return;
+    saveEdit(e.id, null, { hide: true }); toast('Đã ẩn bài'); var b = S.back; S = null; go(b);
   }
   function blankify(q, fill) { var parts = esc(q).split(/_{2,}/); return parts.length === 1 ? esc(q) : parts.join('<span class="blank">' + (fill ? esc(fill) : '&nbsp;') + '</span>'); }
   /* Lớp nhỏ (1, 2, 3, Everybody Up): đọc to câu hỏi và đáp án vì bé chưa đọc thạo */
@@ -1321,7 +1404,7 @@
     var sc = S.score, st = starsFor(sc), wrong = S.res.filter(function (r) { return !r.ok; });
     var msg = sc === 100 ? 'Tuyệt vời! Không sai câu nào!' : sc >= 80 ? 'Giỏi lắm!' : sc >= 50 ? 'Khá rồi! Ôn lại mấy câu sai nhé.' : 'Mình xem lại Mẫu câu rồi làm lại nhé!';
     var nx = '', r = S.exId && EX[S.exId];
-    if (r && r.unit) { var l = r.unit.exercises, ix = l.indexOf(r.ex); if (l[ix + 1]) nx = '<a class="btn btn-lg btn-pink" href="#/ex/' + l[ix + 1].id + '">Bài tiếp theo</a>'; }
+    if (r && r.unit) { var l = exList(r.unit), ix = l.indexOf(r.ex); if (l[ix + 1]) nx = '<a class="btn btn-lg btn-pink" href="#/ex/' + l[ix + 1].id + '">Bài tiếp theo</a>'; }
     return '<div class="qcard res">' + (hasArt('result-great') ? art(sc >= 70 ? 'result-great' : 'result-try', 250, 'res-art') : chick(140, sc >= 70 ? 'wow' : sc >= 40 ? 'happy' : 'sad')) + '<div class="bigstars">' + stars(st, 3, '') + '</div>' +
       '<p class="score" style="color:' + (sc >= 80 ? 'var(--mint)' : sc >= 50 ? 'var(--yel-dk)' : 'var(--red)') + '">' + sc + '%</p><p class="head" style="font-size:24px;margin:8px 0 2px">' + msg + '</p><p class="muted">Đúng ' + S.right + ' / ' + S.res.length + ' câu · +' + S.right + ' ⭐</p>' +
       '<div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:22px"><button class="btn btn-lg" data-act="retry">Làm lại</button><a class="btn btn-lg" href="' + S.back + '">Quay lại</a>' + nx + '</div></div>' +
@@ -1823,6 +1906,11 @@
       if (a === 'retry') { viewPlay(S.id); return; }
       if (a === 'clearbuild') { S.built = []; drawPlay(); return; }
     }
+    if (a === 'gv-edit') { gvEdit(); return; }
+    if (a === 'gv-del') { gvDel(); return; }
+    if (a === 'gv-hideex') { gvHideEx(); return; }
+    if (a === 'gv-close') { var gm = document.getElementById('lp-modal'); if (gm) gm.remove(); return; }
+    if (a === 'gv-exit') { store.del('ln_session'); S = null; G = null; go('#/admin/baitap'); return; }
     if (a === 'logout') { if (LN.cloud) { LN.cloud.flush(); LN.cloud.logout(); } store.del('ln_session'); S = null; G = null; go('#/'); toast('Đã thoát. Hẹn gặp lại!'); }
     else if (a === 'sound') { var sn = !settings().sound; setSetting('sound', sn); var bs = document.querySelector('[data-act=sound]'); if (bs) { bs.classList.toggle('on', sn); bs.innerHTML = cic(sn ? 'sound' : 'mute', 24); bs.setAttribute('aria-pressed', sn); } toast(sn ? 'Đã bật âm thanh đúng / sai' : 'Đã tắt âm thanh đúng / sai'); if (sn) sfx.ok(); }
     else if (a === 'chest') { var pc = prog(); pc.chest = pc.chest || {}; if (!pc.chest[dayKey()]) { pc.chest[dayKey()] = true; pc.stars += 10; saveProg(pc); sfx.win(); confetti(); burst(true, '+10 ⭐ Rương quà!'); setTimeout(route, 900); } }
@@ -1830,6 +1918,7 @@
     else if (a && LN.adminClick) LN.adminClick(a, t, ev);
   });
   document.addEventListener('input', function (ev) { if (ev.target.id === 'ans' && S) S.typed = ev.target.value; });
+  document.addEventListener('change', function (ev) { if (ev.target.hasAttribute && ev.target.hasAttribute('data-gvgrade')) { store.set('ln_gv_grade', +ev.target.value); S = null; G = null; if (location.hash === '#/home') route(); else go('#/home'); } });
   ['keyup', 'keydown'].forEach(function (evn) { document.addEventListener(evn, function (ev) { if (ev.target && ev.target.type === 'password' || (ev.target && ev.target.closest && ev.target.closest('.pwbox'))) { var w = document.querySelector('[data-caps="' + ev.target.id + '"]'); if (w && ev.getModifierState) w.hidden = !ev.getModifierState('CapsLock'); } }); });
   document.addEventListener('keydown', function (ev) {
     if (G && !G.done && IMPL()[G.kind] && IMPL()[G.kind].key) { IMPL()[G.kind].key(G, ev); return; }

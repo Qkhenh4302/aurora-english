@@ -292,7 +292,7 @@
   function viewHome() {
     if (ensureSeed() !== 'ok') return waitView('lop');
     var td = today(), ym = K.ymOf(td), cls = clsList(), sv = store.get('ln_seed_v', null), todays = [];
-    var body = '<div class="ad-h"><div><h1>Lớp học</h1><p class="muted">' + DOWS[K.dow(td)] + ', ' + dmyy(td) + '</p></div><button class="btn btn-sm" data-act="lp-acc">🔑 Tài khoản học sinh</button></div>';
+    var body = '<div class="ad-h"><div><h1>Lớp học</h1><p class="muted">' + DOWS[K.dow(td)] + ', ' + dmyy(td) + '</p></div><div class="sh-tools"><a class="btn btn-sm btn-yel" href="#/admin/baitap">✏️ Làm bài & sửa bài</a><button class="btn btn-sm" data-act="lp-acc">🔑 Tài khoản học sinh</button></div></div>';
     if (sv && sv.rep && !sv.seen) {
       var rp = sv.rep;
       body += '<div class="card lp-rep"><h2>✅ Đã nhập dữ liệu từ file điểm danh</h2><p>Tạo mới <b>' + rp.made.length + '</b> tài khoản' + (rp.linked.length ? ', giữ nguyên <b>' + rp.linked.length + '</b> tài khoản đã có' : '') + '. Mật khẩu chung <b>123456</b>.</p>' +
@@ -595,12 +595,42 @@
     });
   }
 
+  /* ================= Làm bài & sửa bài (giáo viên) ================= */
+  function viewBaiTap() {
+    var E = LN.exEdits ? LN.exEdits() : {}, X = LN.EX || {}, rows = [];
+    Object.keys(E).forEach(function (id) {
+      var d = E[id], r = X[id]; if (!d) return;
+      var e = r && r.ex, where = r && r.unit ? LN.gradeName(r.unit.grade) + ' · Unit ' + r.unit.n + ' · ' + (e ? e.title : id) : (e ? e.title : id);
+      function orig(i) { if (!e) return ''; if (e.type === 'match') return e.left[i] || ''; var it = e.items[i] || {}; return it.q || it.w || ''; }
+      var lines = [];
+      if (d.hide) lines.push('<li><b>Đã ẩn cả bài</b> <button class="btn btn-sm" data-act="lp-exrestore" data-x="' + esc(id) + '" data-i="all">↺ Hiện lại bài</button></li>');
+      Object.keys(d.items || {}).sort(function (a, b) { return a - b; }).forEach(function (i) {
+        var it = d.items[i]; if (!it) return;
+        lines.push('<li>' + (it.hide ? '🗑 <b>Đã xoá</b> câu ' + (+i + 1) + ': <span class="muted">' + esc(orig(i)) + '</span>' : '✏️ <b>Đã sửa</b> câu ' + (+i + 1) + ': <span class="muted"><s>' + esc(orig(i)) + '</s></span> → ' + esc(it.q || it.w || '') + (it.o ? ' <span class="tiny muted">(' + esc(it.o.join(' / ')) + ' · đúng: ' + esc(it.o[it.a] || '') + ')</span>' : it.a ? ' <span class="tiny muted">(đáp án: ' + esc([].concat(it.a).join(' | ')) + ')</span>' : '')) +
+          ' <button class="btn btn-sm" data-act="lp-exrestore" data-x="' + esc(id) + '" data-i="' + i + '">↺ Khôi phục</button></li>');
+      });
+      if (lines.length) rows.push({ at: d.at || 0, html: '<div class="bt-ex"><h3>' + esc(where) + '</h3><ul>' + lines.join('') + '</ul></div>' });
+    });
+    rows.sort(function (a, b) { return b.at - a.at; });
+    var body = '<h1>Làm bài & sửa bài</h1><p class="muted">Cô vào học thử như học sinh để làm hết bài của từng khối. Khi đang làm bài sẽ có nút <b>✏️ Sửa câu này</b>, <b>🗑 Xoá câu này</b>, <b>🚫 Ẩn cả bài</b> – sửa xong mọi học sinh thấy ngay.</p>' +
+      '<div class="card"><h2>Vào học thử</h2><div class="bt-g">' + (LN.GVG || []).map(function (g) { return '<button class="btn btn-lg" data-act="lp-gv" data-g="' + g[0] + '">' + esc(g[1]) + '</button>'; }).join('') + '</div><p class="tiny muted" style="margin-top:8px">Tiến độ khi cô học thử chỉ lưu trên máy này, không tính vào bảng xếp hạng hay tiến độ của học sinh. Muốn quay lại, bấm “Về khu giáo viên” trên thanh vàng.</p></div>' +
+      '<div class="card" style="margin-top:16px"><h2>Các câu đã sửa / xoá (' + rows.length + ' bài)</h2>' + (rows.length ? rows.map(function (r) { return r.html; }).join('') : '<p class="muted">Chưa sửa câu nào.</p>') + '</div>';
+    shell('baitap', body);
+  }
+
   /* ================= Xử lý bấm nút ================= */
   var prev = LN.adminClick;
   LN.adminClick = function (a, t, ev) {
     if (!a || a.indexOf('lp-') !== 0) return prev(a, t, ev);
     var cid = t.getAttribute('data-c'), key = t.getAttribute('data-k'), sid = t.getAttribute('data-s'), ym = t.getAttribute('data-m');
     if (a === 'lp-close') return closeModal();
+    if (a === 'lp-gv') { store.set('ln_gv_grade', +t.getAttribute('data-g')); if (LN.cloud && LN.cloud.logout) LN.cloud.logout(); store.set('ln_session', '__gv'); return LN.go('#/home'); }
+    if (a === 'lp-exrestore') {
+      var EE = LN.exEdits(), xid = t.getAttribute('data-x'), wi = t.getAttribute('data-i'); if (!EE[xid]) return;
+      if (wi === 'all') delete EE[xid].hide; else if (EE[xid].items) delete EE[xid].items[wi];
+      if (!EE[xid].hide && !Object.keys(EE[xid].items || {}).length) delete EE[xid];
+      store.set('ln_exedit', EE); toast('Đã khôi phục'); return refresh();
+    }
     if (a === 'lp-retry') { if (LN.cloud) { LN.cloud.lastPull = 0; LN.cloud.pullFailed = false; LN.cloud.pullAdmin().then(function () { refresh(); }); } return waitView('lop'); }
     if (a === 'lp-sess') return sessModal(cid, key);
     if (a === 'lp-stu') return stuModal(sid, ym);
@@ -681,6 +711,6 @@
   });
   window.addEventListener('hashchange', function () { closeModal(); });
 
-  LN.lop = { byUser: byUser, phieuOfUser: function (un) { var x = byUser(un); if (x) LN.go('#/admin/phieu/' + x.cl.id + '/' + K.ymOf(today()) + '/' + x.st.id); }, viewHome: viewHome, viewClass: viewClass, viewHocPhi: viewHocPhi, viewPhieu: viewPhieu, viewSettings: viewSettings, runSeed: runSeed, report: report, stuOf: stuOf, msgText: msgText,
+  LN.lop = { viewBaiTap: viewBaiTap, byUser: byUser, phieuOfUser: function (un) { var x = byUser(un); if (x) LN.go('#/admin/phieu/' + x.cl.id + '/' + K.ymOf(today()) + '/' + x.st.id); }, viewHome: viewHome, viewClass: viewClass, viewHocPhi: viewHocPhi, viewPhieu: viewPhieu, viewSettings: viewSettings, runSeed: runSeed, report: report, stuOf: stuOf, msgText: msgText,
     viewLich: viewHome, viewLop: viewHome, viewStudent: function (sid) { viewHome(); if (sid) stuModal(sid); } };
 })();
