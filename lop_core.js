@@ -56,8 +56,14 @@
   }
 
   /* Các khoản phải đóng của một học sinh (đến hết tháng `untilYm`) */
-  function periods(cls, cd, st, today, untilYm) {
-    cd = cd || {}; var b = cls.billing || {}, out = [], ymNow = untilYm || ymOf(today);
+  function chargeRows(cls, st, charges, ymNow) {
+    var b = cls.billing || {};
+    return (charges || []).filter(function (c) { return c && c.ym && c.ym <= ymNow && +c.amount; }).map(function (c) {
+      return { id: 'C' + c.id, kind: 'charge', ym: c.ym, label: (c.note || 'Nợ cũ') + ' tháng ' + (+c.ym.slice(5)) + '/' + c.ym.slice(0, 4), n: 0, amount: +c.amount, dates: [], due: ymAdd(c.ym, 1) + '-' + pad(Math.min(28, +b.dueDay || 5)), price: 0 };
+    });
+  }
+  function periods(cls, cd, st, today, untilYm, charges) {
+    cd = cd || {}; var b = cls.billing || {}, out = chargeRows(cls, st, charges, untilYm || ymOf(today)), ymNow = untilYm || ymOf(today);
     var progress = null;
     if (b.mode === 'pack') {
       var size = Math.max(1, +b.size || 5), from = firstMonth(cls, today, cd) + '-01', to = monthDays(ymNow).pop();
@@ -104,9 +110,9 @@
     return { rows: rows, paid: paid, billed: billed, debt: Math.max(0, billed - paid), credit: Math.max(0, paid - billed), overdue: rows.filter(function (r) { return r.status === 'overdue'; }).reduce(function (s, r) { return s + r.rem; }, 0), pays: pays };
   }
   /* Phiếu báo tháng: học phí tháng này + nợ các kỳ trước (đã trừ tiền đóng, kỳ cũ trừ trước) */
-  function monthReport(cls, cd, st, pays, ym, today) {
-    var L = ledger(periods(cls, cd, st, today, ym), pays, today), pack = (cls.billing || {}).mode === 'pack';
-    var cur = L.rows.filter(function (r) { return r.kind === 'pack' ? ymOf(r.dates[0]) === ym : r.id === ym; });
+  function monthReport(cls, cd, st, pays, ym, today, charges) {
+    var L = ledger(periods(cls, cd, st, today, ym, charges), pays, today), pack = (cls.billing || {}).mode === 'pack';
+    var cur = L.rows.filter(function (r) { return r.kind === 'pack' ? ymOf(r.dates[0]) === ym : r.kind === 'charge' ? r.ym === ym : r.id === ym; });
     var old = L.rows.filter(function (r) { return cur.indexOf(r) < 0 && r.rem > 0; });
     var ss = monthSessions(cls, cd, ym).filter(function (s) { return activeOn(st, s.date); }).map(function (s) { return { date: s.date, start: s.start, off: s.off, v: s.off ? null : mark(cd, s.key, st.id) }; });
     var c = { p: 0, a: 0, e: 0 }; ss.forEach(function (s) { if (s.v === 1) c.p++; else if (s.v === 0) c.a++; else if (s.v === 2) c.e++; });
@@ -142,3 +148,5 @@
     sessions: sessions, monthSessions: monthSessions, hist: hist, partsTxt: partsTxt, activeOn: activeOn, priceOf: priceOf, mark: mark, periods: periods, ledger: ledger, firstMonth: firstMonth, monthReport: monthReport, vietqr: vietqr, qrValid: qrValid, crc16: crc16, asciiNote: asciiNote };
   if (typeof module !== 'undefined' && module.exports) module.exports = API; else { root.LN = root.LN || {}; root.LN.lopCore = API; }
 })(this);
+;
+(window.LN_V=window.LN_V||{})["lop_core.js"]="b88675ae";

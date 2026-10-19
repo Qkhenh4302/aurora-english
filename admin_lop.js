@@ -42,7 +42,9 @@
   }
   function ruleTxt(cl) { var b = cl.billing || {}, p = K.priceOf(cl, null, today()); return money(p) + '/buổi · ' + (b.mode === 'pack' ? (b.when === 'before' ? 'đóng trước mỗi gói ' + (b.size || 5) + ' buổi' : 'gói ' + (b.size || 5) + ' buổi · đi học buổi nào tính tiền buổi đó') : 'tính theo số buổi đi học trong tháng'); }
   function stuOf(sid) { var r = null; clsList(true).some(function (cl) { return (cl.students || []).some(function (s) { if (s.id === sid) { r = { cl: cl, st: s }; return true; } return false; }); }); return r; }
-  function report(cl, st, ym) { return K.monthReport(cl, cdata(cl.id), st, payOf(st.id), ym, today()); }
+  function oldLbl(r) { return r.kind === 'charge' ? r.label : 'Còn thiếu ' + r.label.toLowerCase(); }
+  function chargeOf(sid) { return (store.get('ln_charge', {}) || {})[sid] || []; }
+  function report(cl, st, ym) { return K.monthReport(cl, cdata(cl.id), st, payOf(st.id), ym, today(), chargeOf(st.id)); }
   function sessDone(s) { var td = today(); return s.date < td || (s.date === td && K.hm(s.start) <= nowHm()); }
   function refresh() { var y = window.scrollY, g = document.querySelector('.sh-wrap'), sx = g ? g.scrollLeft : 0; LN.adminRoute(location.hash.replace(/^#\/admin\/?/, '').split('/').filter(Boolean)); window.scrollTo(0, y); var g2 = document.querySelector('.sh-wrap'); if (g2 && sx) g2.scrollLeft = sx; }
 
@@ -183,12 +185,15 @@
     var cl = classes()[cid], sl = (cl.slots || [])[0] || { start: '17:00', end: '18:30' };
     modal('<h2>＋ Thêm buổi học</h2><p class="muted">' + esc(cl.name) + ' – buổi học bù, học thêm… Buổi thêm được điểm danh và tính học phí như buổi thường.</p><form id="lp-addsess">' +
       '<div class="two">' + field('as-d', 'Ngày', '<input class="inp" type="date" id="as-d" name="d" value="' + today() + '" required>') + field('as-s', 'Bắt đầu', '<input class="inp" type="time" id="as-s" name="s" value="' + sl.start + '" required>') + field('as-e', 'Kết thúc', '<input class="inp" type="time" id="as-e" name="e" value="' + sl.end + '">') + '</div>' +
-      field('as-n', 'Ghi chú (không bắt buộc)', '<input class="inp" id="as-n" name="n" placeholder="vd. Học bù buổi nghỉ lễ">') + '<button class="btn btn-lg btn-pink" type="submit">Thêm buổi</button></form>');
+      field('as-n', 'Ghi chú (không bắt buộc)', '<input class="inp" id="as-n" name="n" placeholder="vd. Học bù, buổi tháng 9">') + '<p class="tiny muted">Thêm được cả buổi của tháng trước (vd. tháng 9). Nếu ngày này trước ngày bắt đầu học của các bé, app tự dời ngày bắt đầu học về ngày này để điểm danh và tính tiền được.</p><button class="btn btn-lg btn-pink" type="submit">Thêm buổi</button></form>');
     document.getElementById('lp-addsess').addEventListener('submit', function (ev) {
       ev.preventDefault(); var f = ev.target, d = f.d.value, s = f.s.value; if (!d || !s) return;
       var cd = cdata(cid), k = d + '@' + s;
       if (K.sessions(cl, cd, d, d).some(function (x) { return x.key === k && !x.off; })) { toast('Đã có buổi học lúc này rồi.'); return; }
       delete cd.off[k]; cd.extra[k] = { end: f.e.value, note: f.n.value.trim() || 'Buổi thêm' }; saveCd(cid, cd);
+      var c0 = classes()[cid], moved = 0;
+      (c0.students || []).forEach(function (st) { if (!st.left && st.joined && st.joined > d) { st.joined = d; moved++; } });
+      if (moved) saveCls(c0);
       closeModal(); toast('Đã thêm buổi ' + dmyy(d)); LN.go('#/admin/lop/' + cid + '/' + K.ymOf(d));
       if (location.hash === '#/admin/lop/' + cid + '/' + K.ymOf(d)) refresh();
     });
@@ -244,21 +249,24 @@
       '<div class="dr-mnav"><button class="btn btn-sm" data-act="lp-dym" data-m="' + K.ymAdd(ym, -1) + '">‹</button><b>' + ymTxt(ym) + '</b><button class="btn btn-sm" data-act="lp-dym" data-m="' + K.ymAdd(ym, 1) + '">›</button></div>' +
       '<div class="dr-att"><div class="p"><b>' + R.count.p + '</b> có mặt<small>' + list(1) + '</small></div><div class="a"><b>' + R.count.a + '</b> vắng<small>' + list(0) + '</small></div><div class="e"><b>' + R.count.e + '</b> có phép<small>' + list(2) + '</small></div></div>' +
       feeTable(cl, st, R) +
-      '<div class="dr-acts"><button class="btn btn-mint" data-act="lp-payform">＋ Ghi nhận đóng tiền</button><a class="btn" href="#/admin/phieu/' + esc(cl.id) + '/' + ym + '/' + esc(sid) + '">📄 Phiếu báo ' + mTxt(ym) + '</a></div><div id="lp-sub"></div>';
+      '<div class="dr-acts"><button class="btn btn-mint" data-act="lp-payform">＋ Ghi nhận đóng tiền</button><button class="btn" data-act="lp-chargeform">＋ Nợ cũ / khoản thu khác</button><a class="btn" href="#/admin/phieu/' + esc(cl.id) + '/' + ym + '/' + esc(sid) + '">📄 Phiếu báo ' + mTxt(ym) + '</a></div><div id="lp-sub"></div>';
+    var CH = chargeOf(sid);
+    if (CH.length) h += '<h3 class="dr-h">Nợ cũ / khoản thu khác</h3><div class="dr-pays">' + CH.map(function (c) { return '<div><span>' + ymTxt(c.ym) + '</span><b>' + money(c.amount) + '</b><span class="muted small">' + esc(c.note || 'Nợ cũ') + '</span><button class="lnk" data-act="lp-delcharge" data-id="' + esc(c.id) + '" aria-label="Xoá khoản này">✕</button></div>'; }).join('') + '</div>';
     var P = payOf(sid).slice().sort(function (a, b) { return a.date < b.date ? 1 : -1; });
     h += '<h3 class="dr-h">Lịch sử đóng tiền</h3>' + (P.length ? '<div class="dr-pays">' + P.map(function (p) { return '<div><span>' + dmyy(p.date) + '</span><b>' + money(p.amount) + '</b><span class="muted small">' + esc(p.method || '') + (p.note ? ' · ' + esc(p.note) : '') + '</span><button class="lnk" data-act="lp-delpay" data-id="' + esc(p.id) + '" aria-label="Xoá lần đóng này">✕</button></div>'; }).join('') + '</div>' : '<p class="muted small">Chưa có lần đóng tiền nào.</p>');
     var rows = R.L.rows.slice().reverse();
     if (rows.length > 1) h += '<h3 class="dr-h">Các kỳ học phí</h3><table class="tbl dr-hist"><thead><tr><th>Kỳ</th><th>Phải đóng</th><th>Đã đóng</th><th>Còn</th></tr></thead><tbody>' + rows.map(function (r) { return '<tr><td>' + esc(r.label) + '</td><td>' + money(r.amount) + '</td><td>' + money(r.paid) + '</td><td>' + (r.rem > 0 ? '<b class="neg">' + money(r.rem) + '</b>' : '✓') + '</td></tr>'; }).join('') + '</tbody></table>';
     h += '<details class="lp-more"><summary>Sửa thông tin học sinh…</summary><form id="lp-editst" class="lp-sub">' +
       '<div class="two">' + field('es-n', 'Họ tên', '<input class="inp" id="es-n" name="name" value="' + esc(st.name) + '">') + field('es-p', 'Học phí riêng/buổi (trống = giá lớp)', '<input class="inp" type="number" step="1" min="0" id="es-p" name="price" value="' + (+K.hist(st.prices, today(), +st.price || 0) || '') + '" placeholder="' + K.priceOf(cl, null, today()) + '">') + field('es-f', 'Giá riêng áp dụng từ', '<input class="inp" type="date" id="es-f" name="from" value="' + K.ymOf(today()) + '-01">') + '</div>' +
+      field('es-j', 'Bắt đầu học từ ngày', '<input class="inp" type="date" id="es-j" name="joined" value="' + esc(st.joined || '') + '">') +
       '<button class="btn btn-sm btn-pink" type="submit">Lưu</button> ' + (st.left ? '<button class="btn btn-sm" type="button" data-act="lp-back">↩ Học lại</button>' : '<button class="btn btn-sm" type="button" data-act="lp-leave">Cho nghỉ học từ hôm nay</button>') + '</form></details>';
     modal(h, 'wide');
     var fe = document.getElementById('lp-editst');
     fe.addEventListener('submit', function (ev) {
       ev.preventDefault(); var c = classes()[cl.id];
-      var np = +fe.price.value || 0, from = fe.from.value || (K.ymOf(today()) + '-01');
+      var np = +fe.price.value || 0, from = fe.from.value || (K.ymOf(today()) + '-01'), nj = fe.joined.value;
       c.students.forEach(function (s) {
-        if (s.id !== sid) return; s.name = fe.name.value.trim() || s.name;
+        if (s.id !== sid) return; s.name = fe.name.value.trim() || s.name; if (nj) s.joined = nj;
         if (np !== (+K.hist(s.prices, from, +s.price || 0) || 0)) { s.prices = (s.prices || []).filter(function (x) { return x.from < from; }); s.prices.push({ from: from, price: np || null }); }
       });
       saveCls(c); toast('Đã lưu'); refresh(); stuModal(sid, ym);
@@ -267,13 +275,25 @@
   function progTxt(g) { return (g.packs ? 'Đã học xong ' + g.packs + ' gói · ' : '') + 'Gói hiện tại: ' + g.done + '/' + g.size + ' buổi'; }
   function feeTable(cl, st, R) {
     var pack = (cl.billing || {}).mode === 'pack', rows = '';
-    R.cur.forEach(function (r) { rows += '<tr><td>' + (r.kind === 'pack' ? esc(r.label) + ' · ' + r.n + ' × ' + money(r.price) : 'Học phí ' + mTxt(R.ym) + ' · ' + K.partsTxt(r, money)) + '</td><td>' + money(r.amount) + '</td></tr>'; });
+    R.cur.forEach(function (r) { rows += '<tr><td>' + (r.kind === 'charge' ? esc(r.label) : r.kind === 'pack' ? esc(r.label) + ' · ' + r.n + ' × ' + money(r.price) : 'Học phí ' + mTxt(R.ym) + ' · ' + K.partsTxt(r, money)) + '</td><td>' + money(r.amount) + '</td></tr>'; });
     if (!R.cur.length) rows += '<tr><td>Học phí ' + mTxt(R.ym) + ' · 0 buổi' + '</td><td>0đ</td></tr>';
     if (R.feePaid) rows += '<tr><td>Đã đóng cho ' + (R.cur[0] && R.cur[0].kind === 'pack' ? 'gói này' : mTxt(R.ym)) + '</td><td>−' + money(R.feePaid) + '</td></tr>';
-    R.old.forEach(function (r) { rows += '<tr class="old"><td>Còn nợ ' + esc(r.label.toLowerCase()) + ' (cộng dồn)</td><td>+' + money(r.rem) + '</td></tr>'; });
+    R.old.forEach(function (r) { rows += '<tr class="old"><td>' + esc(oldLbl(r)) + ' (cộng dồn)</td><td>+' + money(r.rem) + '</td></tr>'; });
     return '<table class="fee-t"><tbody>' + rows + '</tbody><tfoot><tr><td>Còn phải đóng' + (R.due && R.total > 0 ? '<small>Hạn ' + dmyy(R.due) + '</small>' : '') + '</td><td>' + (R.total > 0 ? money(R.total) : '<span class="ok">Đã đủ ✓</span>') + '</td></tr></tfoot></table>' +
       (R.credit ? '<p class="small" style="color:var(--mint-dk)">Đóng dư ' + money(R.credit) + ' – tự trừ vào tháng sau.</p>' : '') +
       (R.progress ? '<p class="small muted">📦 ' + progTxt(R.progress) + '</p>' : '');
+  }
+  function chargeForm(sid) {
+    var sub = document.getElementById('lp-sub'); if (!sub) return; var pm = K.ymAdd(K.ymOf(today()), -1);
+    sub.innerHTML = '<form id="lp-chf" class="lp-sub"><p class="small">Dùng khi bé còn nợ học phí từ trước khi dùng app (vd. tháng 9), hoặc khoản thu khác (sách, tài liệu…). Khoản này được cộng vào học phí và hiện trên phiếu báo.</p><div class="two">' +
+      field('ch-m', 'Thuộc tháng', '<input class="inp" type="month" id="ch-m" name="ym" value="' + pm + '" required>') + field('ch-a', 'Số tiền', '<input class="inp" type="number" step="1" min="1" id="ch-a" name="amount" required>') + '</div>' +
+      field('ch-n', 'Ghi chú', '<input class="inp" id="ch-n" name="note" value="Học phí còn nợ">') + '<button class="btn btn-pink" type="submit">Lưu khoản nợ</button></form>';
+    var f = document.getElementById('lp-chf'); f.amount.focus();
+    f.addEventListener('submit', function (ev) {
+      ev.preventDefault(); var a = +f.amount.value, ym = f.ym.value; if (!(a > 0) || !ym) return;
+      var all = store.get('ln_charge', {}) || {}; all[sid] = all[sid] || []; all[sid].push({ id: 'c' + Date.now().toString(36), ym: ym, amount: a, note: f.note.value.trim() || 'Học phí còn nợ', at: Date.now() });
+      store.set('ln_charge', all); toast('Đã thêm ' + money(a) + ' (' + ymTxt(ym) + ')'); refresh(); stuModal(sid, DRAWER && DRAWER.ym);
+    });
   }
   function payForm(sid, amt) {
     var sub = document.getElementById('lp-sub'); if (!sub) return;
@@ -292,7 +312,7 @@
   function viewHome() {
     if (ensureSeed() !== 'ok') return waitView('lop');
     var td = today(), ym = K.ymOf(td), cls = clsList(), sv = store.get('ln_seed_v', null), todays = [];
-    var body = '<div class="ad-h"><div><h1>Lớp học</h1><p class="muted">' + DOWS[K.dow(td)] + ', ' + dmyy(td) + '</p></div><button class="btn btn-sm" data-act="lp-acc">🔑 Tài khoản học sinh</button></div>';
+    var body = '<div class="ad-h"><div><h1>Lớp học</h1><p class="muted">' + DOWS[K.dow(td)] + ', ' + dmyy(td) + '</p></div><div class="sh-tools"><a class="btn btn-sm btn-yel" href="#/admin/baitap">✏️ Làm bài & sửa bài</a><button class="btn btn-sm" data-act="lp-acc">🔑 Tài khoản học sinh</button></div></div>';
     if (sv && sv.rep && !sv.seen) {
       var rp = sv.rep;
       body += '<div class="card lp-rep"><h2>✅ Đã nhập dữ liệu từ file điểm danh</h2><p>Tạo mới <b>' + rp.made.length + '</b> tài khoản' + (rp.linked.length ? ', giữ nguyên <b>' + rp.linked.length + '</b> tài khoản đã có' : '') + '. Mật khẩu chung <b>123456</b>.</p>' +
@@ -434,10 +454,10 @@
   }
   function phieuData(cl, st, ym) {
     var R = report(cl, st, ym), B = bank(), pack = (cl.billing || {}).mode === 'pack', pn = payNote(st, ym), lines = [];
-    R.cur.forEach(function (r) { lines.push({ t: r.kind === 'pack' ? r.label + ': ' + r.n + ' buổi × ' + money(r.price) : 'Học phí ' + mTxt(ym) + ': ' + K.partsTxt(r, money), v: money(r.amount) }); });
+    R.cur.forEach(function (r) { lines.push({ t: r.kind === 'charge' ? r.label : r.kind === 'pack' ? r.label + ': ' + r.n + ' buổi × ' + money(r.price) : 'Học phí ' + mTxt(ym) + ': ' + K.partsTxt(r, money), v: money(r.amount) }); });
     if (!R.cur.length) lines.push({ t: 'Học phí ' + mTxt(ym) + ': 0 buổi', v: '0đ' });
     if (R.feePaid) lines.push({ t: 'Đã đóng', v: '−' + money(R.feePaid) });
-    R.old.forEach(function (r) { lines.push({ t: 'Còn thiếu ' + r.label.toLowerCase() + ' (cộng dồn)', v: '+' + money(r.rem), old: true }); });
+    R.old.forEach(function (r) { lines.push({ t: oldLbl(r) + ' (cộng dồn)', v: '+' + money(r.rem), old: true }); });
     var chips = R.sessions.filter(function (s) { return s.v != null || s.date <= today(); }).map(function (s) {
       var t = s.off ? ['off', '–'] : s.v === 1 ? ['p', '✓'] : s.v === 0 ? ['a', '✗'] : s.v === 2 ? ['e', 'P'] : ['n', '·'];
       return { c: t[0], m: t[1], l: DOWS_S[K.dow(s.date)] + ' ' + dmy(s.date) };
@@ -479,9 +499,9 @@
     var x = stuOf(sid), cl = x.cl, st = x.st, R = report(cl, st, ym), pack = (cl.billing || {}).mode === 'pack', B = bank();
     var t = 'Aurora English gửi phụ huynh bé ' + st.name + ' (' + cl.name + ') – ' + ymTxt(ym).toLowerCase() + ':\n';
     t += '• Đi học ' + R.count.p + ' buổi' + (R.count.a ? ', vắng ' + R.count.a : '') + (R.count.e ? ', có phép ' + R.count.e : '') + '.\n';
-    R.cur.forEach(function (r) { t += '• ' + (r.kind === 'pack' ? r.label + ': ' + r.n + ' buổi × ' + money(r.price) : 'Học phí ' + mTxt(ym) + ': ' + K.partsTxt(r, money)) + ' = ' + money(r.amount) + '\n'; });
+    R.cur.forEach(function (r) { t += '• ' + (r.kind === 'charge' ? r.label : r.kind === 'pack' ? r.label + ': ' + r.n + ' buổi × ' + money(r.price) : 'Học phí ' + mTxt(ym) + ': ' + K.partsTxt(r, money)) + ' = ' + money(r.amount) + '\n'; });
     if (R.feePaid) t += '• Đã đóng: ' + money(R.feePaid) + '\n';
-    R.old.forEach(function (r) { t += '• Còn thiếu ' + r.label.toLowerCase() + ': ' + money(r.rem) + ' (cộng dồn)\n'; });
+    R.old.forEach(function (r) { t += '• ' + oldLbl(r) + ': ' + money(r.rem) + ' (cộng dồn)\n'; });
     t += R.total > 0 ? '👉 Tổng cần đóng: ' + money(R.total) + (R.due ? ' – hạn ' + dmyy(R.due) : '') + '.\nChuyển khoản ' + B.bank + ' – ' + B.holder + ', nội dung: ' + K.asciiNote(payNote(st, ym)) + ' (quét mã QR trong phiếu).\n' : '👉 Học phí đã đóng đủ.\n';
     return t + 'Cảm ơn phụ huynh đã đồng hành cùng con! 💛';
   }
@@ -597,7 +617,7 @@
 
   /* ================= Làm bài & sửa bài (giáo viên) ================= */
   function viewBaiTap() {
-    var E = LN.exEdits ? LN.exEdits() : {}, X = LN.EX || {}, rows = [];
+    var E = store.get('ln_exedit', {}) || {}, X = LN.EX || {}, rows = [];
     Object.keys(E).forEach(function (id) {
       var d = E[id], r = X[id]; if (!d) return;
       var e = r && r.ex, where = r && r.unit ? LN.gradeName(r.unit.grade) + ' · Unit ' + r.unit.n + ' · ' + (e ? e.title : id) : (e ? e.title : id);
@@ -613,7 +633,7 @@
     });
     rows.sort(function (a, b) { return b.at - a.at; });
     var body = '<h1>Làm bài & sửa bài</h1><p class="muted">Cô vào học thử như học sinh để làm hết bài của từng khối. Khi đang làm bài sẽ có nút <b>✏️ Sửa câu này</b>, <b>🗑 Xoá câu này</b>, <b>🚫 Ẩn cả bài</b> – sửa xong mọi học sinh thấy ngay.</p>' +
-      '<div class="card"><h2>Vào học thử</h2><div class="bt-g">' + (LN.GVG || []).map(function (g) { return '<button class="btn btn-lg" data-act="lp-gv" data-g="' + g[0] + '">' + esc(g[1]) + '</button>'; }).join('') + '</div><p class="tiny muted" style="margin-top:8px">Tiến độ khi cô học thử chỉ lưu trên máy này, không tính vào bảng xếp hạng hay tiến độ của học sinh. Muốn quay lại, bấm “Về khu giáo viên” trên thanh vàng.</p></div>' +
+      (LN.isGv ? '' : '<div class="note note-yel" style="margin-bottom:12px">⚠ Web đang chạy lẫn tệp cũ (tệp <b>js/app.js</b> hoặc <b>index.html</b> chưa được cập nhật). Cô chép lại <b>toàn bộ</b> các tệp trong bản cập nhật lên GitHub (cả index.html), đợi Vercel báo Ready rồi bấm <b>Ctrl + Shift + R</b> để tải lại.</div>') + '<div class="card"><h2>Vào học thử</h2><div class="bt-g">' + (LN.GVG || [[1, 'Lớp 1'], [2, 'Lớp 2'], [3, 'Lớp 3'], [4, 'Lớp 4'], [101, 'Everybody Up 1'], [102, 'Everybody Up 2']]).map(function (g) { return '<button class="btn btn-lg" data-act="lp-gv" data-g="' + g[0] + '">' + esc(g[1]) + '</button>'; }).join('') + '</div><p class="tiny muted" style="margin-top:8px">Tiến độ khi cô học thử chỉ lưu trên máy này, không tính vào bảng xếp hạng hay tiến độ của học sinh. Muốn quay lại, bấm “Về khu giáo viên” trên thanh vàng.</p></div>' +
       '<div class="card" style="margin-top:16px"><h2>Các câu đã sửa / xoá (' + rows.length + ' bài)</h2>' + (rows.length ? rows.map(function (r) { return r.html; }).join('') : '<p class="muted">Chưa sửa câu nào.</p>') + '</div>';
     shell('baitap', body);
   }
@@ -626,7 +646,7 @@
     if (a === 'lp-close') return closeModal();
     if (a === 'lp-gv') { store.set('ln_gv_grade', +t.getAttribute('data-g')); if (LN.cloud && LN.cloud.logout) LN.cloud.logout(); store.set('ln_session', '__gv'); return LN.go('#/home'); }
     if (a === 'lp-exrestore') {
-      var EE = LN.exEdits(), xid = t.getAttribute('data-x'), wi = t.getAttribute('data-i'); if (!EE[xid]) return;
+      var EE = store.get('ln_exedit', {}) || {}, xid = t.getAttribute('data-x'), wi = t.getAttribute('data-i'); if (!EE[xid]) return;
       if (wi === 'all') delete EE[xid].hide; else if (EE[xid].items) delete EE[xid].items[wi];
       if (!EE[xid].hide && !Object.keys(EE[xid].items || {}).length) delete EE[xid];
       store.set('ln_exedit', EE); toast('Đã khôi phục'); return refresh();
@@ -670,10 +690,12 @@
       }
       saveCd(c2, d2); refresh(); sessModal(c2, k2); return;
     }
-    if (DRAWER && /^lp-(dym|payform|delpay|resetpw|mkacc|leave|back)$/.test(a)) {
+    if (DRAWER && /^lp-(dym|payform|delpay|resetpw|mkacc|leave|back|chargeform|delcharge)$/.test(a)) {
       var D = DRAWER, x = stuOf(D.sid); if (!x) return;
       if (a === 'lp-dym') return stuModal(D.sid, ym);
       if (a === 'lp-payform') return payForm(D.sid, report(x.cl, x.st, D.ym).total);
+      if (a === 'lp-chargeform') return chargeForm(D.sid);
+      if (a === 'lp-delcharge') { if (!confirm('Xoá khoản nợ này?')) return; var CA = store.get('ln_charge', {}) || {}; CA[D.sid] = (CA[D.sid] || []).filter(function (c) { return c.id !== t.getAttribute('data-id'); }); store.set('ln_charge', CA); refresh(); return stuModal(D.sid, D.ym); }
       if (a === 'lp-delpay') { if (!confirm('Xoá lần đóng tiền này?')) return; var P = pays(); P[D.sid] = (P[D.sid] || []).filter(function (p) { return p.id !== t.getAttribute('data-id'); }); store.set('ln_pay', P); refresh(); return stuModal(D.sid, D.ym); }
       if (a === 'lp-resetpw') { var all = LN.users(); if (!all[x.st.user]) return; all[x.st.user].pass = LN.hash(x.st.user + ':123456'); store.set('ln_users', all); toast('Mật khẩu của ' + x.st.user + ' là 123456'); return; }
       if (a === 'lp-mkacc') {
@@ -714,3 +736,5 @@
   LN.lop = { viewBaiTap: viewBaiTap, byUser: byUser, phieuOfUser: function (un) { var x = byUser(un); if (x) LN.go('#/admin/phieu/' + x.cl.id + '/' + K.ymOf(today()) + '/' + x.st.id); }, viewHome: viewHome, viewClass: viewClass, viewHocPhi: viewHocPhi, viewPhieu: viewPhieu, viewSettings: viewSettings, runSeed: runSeed, report: report, stuOf: stuOf, msgText: msgText,
     viewLich: viewHome, viewLop: viewHome, viewStudent: function (sid) { viewHome(); if (sid) stuModal(sid); } };
 })();
+;
+(window.LN_V=window.LN_V||{})["admin_lop.js"]="6ff16d96";

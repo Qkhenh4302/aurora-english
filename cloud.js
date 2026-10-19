@@ -5,10 +5,29 @@
 (function () {
   var LN = window.LN, store = LN.store;
   var C = LN.cloud = { on: false, checked: false, boardList: null, state: 'idle' };
-  var SHARED = /^ln_(users|admin|teachers|class|att|fees|imports|grammar|grammar_del|grammar_v|classes|pay|bank|exedit|seed_done|seed_v|note_[a-z0-9_]{1,40}|cl_[a-z0-9_-]{1,40})$/, PROG = /^ln_prog_([a-z0-9_]{1,40})$/;
+  var SHARED = /^ln_(users|admin|teachers|class|att|fees|imports|grammar|grammar_del|grammar_v|classes|pay|charge|bank|exedit|seed_done|seed_v|note_[a-z0-9_]{1,40}|cl_[a-z0-9_-]{1,40})$/, PROG = /^ln_prog_([a-z0-9_]{1,40})$/;
   var raw = { set: store.set, del: store.del }, QUIET = 0;
   function quiet(fn) { QUIET++; try { fn(); } finally { QUIET--; } }
   function same(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+  /* Gộp tiến độ học của 2 bản (2 máy / máy và mạng): không bao giờ làm mất kết quả đã làm */
+  function mergeProg(a, b) {
+    if (!a) return b; if (!b) return a;
+    function isO(x) { return x && typeof x === 'object' && !Array.isArray(x); }
+    function deep(x, y) {
+      if (x === undefined) return y; if (y === undefined) return x;
+      if (typeof x === 'number' && typeof y === 'number') return Math.max(x, y);
+      if (typeof x === 'boolean' || typeof y === 'boolean') return !!(x || y);
+      if (Array.isArray(x) && Array.isArray(y)) { var seen = {}, out = []; x.concat(y).forEach(function (v) { var k = JSON.stringify(v); if (!seen[k]) { seen[k] = 1; out.push(v); } }); return out; }
+      if (isO(x) && isO(y)) { var o = {}; Object.keys(x).concat(Object.keys(y)).forEach(function (k) { if (!(k in o)) o[k] = deep(x[k], y[k]); }); return o; }
+      return y;
+    }
+    var m = deep(a, b);
+    var lg = {}; m.log = (a.log || []).concat(b.log || []).filter(function (l) { var k = (l && l.t) + '|' + (l && (l.id || l.title)); if (lg[k]) return false; lg[k] = 1; return true; }).sort(function (x, y) { return (x.t || 0) - (y.t || 0); }).slice(-400);
+    m.updated = Math.max(+a.updated || 0, +b.updated || 0);
+    return m;
+  }
+  C.mergeProg = mergeProg;
+
   /* Gộp 3 chiều giống máy chủ (base = bản lấy về lần trước) */
   function isObj(x) { return x && typeof x === 'object' && !Array.isArray(x); }
   function kid(x) { return x.id != null ? 'i:' + x.id : 'u:' + x.user; }
@@ -92,7 +111,7 @@
       var p = store.get('ln_prog_' + u, null) || {};
       jobs.push(api('prog', { token: st, updated: p.updated || Date.now(), data: p, sum: LN.progSummary ? LN.progSummary(p) : {} }).then(function (j) {
         var q4 = Q(); q4.prog = false; setQ(q4);
-        if (j.stale && j.prog && j.prog.data) quiet(function () { raw.set.call(store, 'ln_prog_' + u, j.prog.data); });
+        if (j.prog && j.prog.data) quiet(function () { var cur = store.get('ln_prog_' + u, null), mg = mergeProg(cur, j.prog.data); if (!same(cur, mg)) raw.set.call(store, 'ln_prog_' + u, mg); });
       }, function (e) { if (e.status === 401) { raw.del.call(store, 'ln_cloud_tok'); var q5 = Q(); q5.prog = false; setQ(q5); } throw e; }));
     }
     if (!jobs.length) { badge(keys.length ? 'login' : 'ok'); return; }
@@ -144,8 +163,9 @@
       Object.keys(d.progs || {}).forEach(function (u) {
         var sv = d.progs[u], lv = store.get('ln_prog_' + u, null);
         if (q.keys['ln_prog_' + u]) return;
-        if (lv && newer(lv, sv.data) && firstLogin) push.push('ln_prog_' + u);
-        else if (!same(lv, sv.data)) { raw.set.call(store, 'ln_prog_' + u, sv.data); changed = true; }
+        var mg = mergeProg(lv, sv.data);
+        if (!same(mg, lv)) { raw.set.call(store, 'ln_prog_' + u, mg); changed = true; }
+        if (lv && !same(mg, sv.data)) push.push('ln_prog_' + u);   // máy cô còn giữ kết quả mạng bị thiếu: gộp & gửi lên
         delete local[u];
       });
     });
@@ -158,9 +178,9 @@
     quiet(function () {
       var all = store.get('ln_users', {}) || {}, old = all[u] || {};
       all[u] = Object.assign({}, old, user, { pass: hash || old.pass || '' }); raw.set.call(store, 'ln_users', all);
-      var lv = store.get('ln_prog_' + u, null);
-      if (prog && prog.data && (!lv || newer(prog.data, lv) || !lv.updated)) raw.set.call(store, 'ln_prog_' + u, prog.data);
-      else if (lv && (!prog || newer(lv, prog.data))) { var q = Q(); q.prog = true; setQ(q); schedule(1000); }
+      var lv = store.get('ln_prog_' + u, null), sv = prog && prog.data, mg = mergeProg(lv, sv);
+      if (mg && !same(mg, lv)) raw.set.call(store, 'ln_prog_' + u, mg);
+      if (mg && !same(mg, sv)) { var q = Q(); q.prog = true; setQ(q); schedule(1000); }   // máy này có kết quả mạng chưa có: gửi lên
     });
   }
 
@@ -226,3 +246,5 @@
     LN.adminRoute._cloud = true;
   }
 })();
+;
+(window.LN_V=window.LN_V||{})["cloud.js"]="5282ec6a";
