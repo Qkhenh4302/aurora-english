@@ -68,14 +68,22 @@
   }
 
   /* ================= Khung ================= */
+  function staleWarn() {
+    if (location.protocol === 'file:') return '';
+    var E = window.LN_EXPECT, V = window.LN_V || {}, bad = [];
+    if (!E) bad.push('index.html');
+    else Object.keys(E).forEach(function (f) { if (V[f] !== E[f]) bad.push('js/' + f); });
+    if (!bad.length) return '';
+    return '<div class="note" style="background:#FFE4E2;border:2px solid #F08A80;color:#8a2a22;margin-bottom:14px"><b>⚠ Web chưa cập nhật đủ tệp:</b> ' + bad.map(esc).join(', ') + '. Các tệp này còn là bản cũ nên một số chức năng (học thử, sửa/xoá bài…) sẽ không chạy. Cô chép lại đúng các tệp này lên GitHub (giữ nguyên thư mục js/), đợi Vercel báo Ready rồi bấm Ctrl + Shift + R.</div>';
+  }
   function shell(active, body) {
     var a = adm();
     if (/^(grammar|ai|data|account|roster)$/.test(active)) active = 'caidat';
     function nl(id, href, icon, label) { return '<a href="' + href + '" class="' + (active === id ? 'on' : '') + '">' + ic(icon, 19) + label + '</a>'; }
     LN.render('<div class="adm"><aside class="aside"><a class="brand" href="#/admin">' + LN.logo(36) + '<span class="bname">Aurora <b>English</b></span></a>' +
-      '<span class="aver">Bản cập nhật 10 · 12/10</span><span class="lb">Quản lý</span>' + nl('lop', '#/admin', 'users', 'Lớp học') + nl('hocphi', '#/admin/hocphi', 'money', 'Học phí') + nl('home', '#/admin/tiendo', 'chart', 'Tiến độ học app') + nl('baitap', '#/admin/baitap', 'book', 'Làm bài & sửa bài') + nl('caidat', '#/admin/caidat', 'key', 'Cài đặt') +
+      '<span class="aver">Bản cập nhật 16 · 20/10</span><span class="lb">Quản lý</span>' + nl('lop', '#/admin', 'users', 'Lớp học') + nl('hocphi', '#/admin/hocphi', 'money', 'Học phí') + nl('home', '#/admin/tiendo', 'chart', 'Tiến độ học app') + nl('baitap', '#/admin/baitap', 'book', 'Làm bài & sửa bài') + nl('caidat', '#/admin/caidat', 'key', 'Cài đặt') +
       '<span class="lb">Khác</span><a href="#/">' + ic('eye', 19) + 'Mở trang học sinh</a><a href="#" data-act="a-logout">' + ic('out', 19) + 'Đăng xuất' + (cur() ? ' (' + esc(cur().user) + ')' : '') + '</a></aside>' +
-      '<main class="amain">' + body + '</main></div>');
+      '<main class="amain">' + staleWarn() + body + '</main></div>');
   }
 
   LN.adminShell = shell; LN.adminSummary = function (un, d) { return summary(un, d); }; LN.drawChick = function (c, x, y, sz) { drawChick(c, x, y, sz); };
@@ -304,6 +312,29 @@
   }
 
   /* ================= Dữ liệu & tài khoản ================= */
+  /* ---- Khôi phục tiến độ làm bài ---- */
+  function pstat(un) { var p = LN.progOf(un); return { ex: Object.keys(p.ex || {}).length, stars: p.stars || 0, days: Object.keys(p.days || {}).length, up: p.updated || 0 }; }
+  function restoreCard() {
+    var all = LN.users(), list = Object.keys(all).map(function (u) { return { u: u, n: all[u].name || u, g: all[u].grade, c: clsName(u), s: pstat(u) }; });
+    list.sort(function (a, b) { return (a.c === '—') - (b.c === '—') || a.c.localeCompare(b.c, 'vi', { numeric: true }) || a.n.localeCompare(b.n, 'vi'); });
+    var opt = function (x) { return '<option value="' + esc(x.u) + '">' + esc(x.n) + ' (' + esc(x.u) + ') · ' + x.s.ex + ' bài</option>'; };
+    return '<div class="card" style="margin-top:18px"><h2>Khôi phục tiến độ làm bài</h2>' +
+      '<p class="small muted">Từ bản này, kết quả làm bài ở mọi máy được <b>gộp lại</b> chứ không ghi đè nữa: máy nào còn giữ kết quả cũ (máy của bé hoặc máy của cô), chỉ cần mở web là kết quả tự gộp lên mạng. Máy chủ cũng giữ thêm một bản trước mỗi lần lưu.</p>' +
+      '<p style="margin:10px 0"><button class="btn btn-pink" data-act="a-pushprog">⬆ Gộp & gửi lên mạng toàn bộ tiến độ đang lưu trên máy này</button></p>' +
+      '<h3 style="margin:16px 0 6px">Gộp tiến độ từ tài khoản cũ sang tài khoản mới</h3><p class="small muted">Dùng khi bé từng tự đăng ký một tài khoản khác (vd. tên khác) và đã làm bài ở đó.</p>' +
+      '<div class="two" style="align-items:end"><div class="field"><label for="rs-from">Lấy kết quả từ</label><select class="sel" id="rs-from">' + list.filter(function (x) { return x.s.ex || x.s.stars; }).map(opt).join('') + '</select></div><div class="field"><label for="rs-to">Gộp vào tài khoản</label><select class="sel" id="rs-to">' + list.map(opt).join('') + '</select></div><div><button class="btn" data-act="a-mergeprog">Gộp</button></div></div>' +
+      '<details style="margin-top:12px"><summary class="small">Xem tiến độ của tất cả tài khoản (' + list.length + ')</summary><div class="tblw"><table class="tbl"><thead><tr><th>Học sinh</th><th>Tài khoản</th><th>Lớp</th><th>Khối học trên app</th><th>Bài đã làm</th><th>Sao</th><th>Ngày học</th></tr></thead><tbody>' +
+      list.map(function (x) { return '<tr><td>' + esc(x.n) + '</td><td><code>' + esc(x.u) + '</code></td><td>' + esc(x.c) + '</td><td>' + (x.c === '—' ? '<select class="sel" data-ugrade="' + esc(x.u) + '" style="min-height:36px;padding:2px 8px">' + LN.gradeOpts(x.g) + '</select>' : esc(LN.gradeName(x.g))) + '</td><td>' + x.s.ex + '</td><td>' + x.s.stars + '</td><td>' + x.s.days + '</td></tr>'; }).join('') + '</tbody></table></div></details></div>';
+  }
+  function bindRestore() {
+    [].forEach.call(document.querySelectorAll('[data-ugrade]'), function (sel) {
+      sel.addEventListener('change', function () { var all = LN.users(), u = sel.getAttribute('data-ugrade'); if (!all[u]) return; all[u].grade = +sel.value; store.set('ln_users', all); toast('Đã đổi khối của ' + u + ' sang ' + LN.gradeName(+sel.value)); });
+    });
+  }
+  LN._pushAllProg = function () {
+    var n = 0; store.keys().forEach(function (k) { var m = k.match(/^ln_prog_([a-z0-9_]{1,40})$/); if (m && m[1] !== '__gv') { store.set(k, store.get(k, null)); n++; } });
+    if (LN.cloud && LN.cloud.flush) LN.cloud.flush(); return n;
+  };
   function viewData() {
     var keys = store.keys(), size = 0; keys.forEach(function (k) { size += JSON.stringify(store.get(k)).length; });
     var demo = Object.keys(LN.users()).filter(function (u) { return LN.users()[u].demo; }).length;
@@ -312,6 +343,8 @@
       '<h2 style="margin-top:24px">Khôi phục</h2><p class="muted small" style="margin-bottom:10px">Chọn file sao lưu để nạp lại. Dữ liệu hiện tại sẽ bị thay thế.</p><label class="btn" for="a-import">' + ic('up', 18) + 'Chọn file sao lưu…</label><input type="file" id="a-import" accept=".json,application/json" class="sr-only"></div>' +
       '<div class="card side"><h2>Dữ liệu mẫu</h2><p class="muted small" style="margin-bottom:14px">Tạo 4 học sinh mẫu có tiến độ khác nhau để xem thử báo cáo. Có nhãn "mẫu", xoá được bất kỳ lúc nào.</p>' +
       '<button class="btn btn-yel btn-block" data-act="a-demo">Tạo dữ liệu mẫu</button>' + (demo ? '<button class="btn btn-block" style="margin-top:10px" data-act="a-undemo">Xoá ' + demo + ' học sinh mẫu</button>' : '') + '</div></div>');
+    document.querySelector('.amain').insertAdjacentHTML('beforeend', restoreCard());
+    bindRestore();
     document.getElementById('a-import').addEventListener('change', function (ev) {
       var f = ev.target.files[0]; if (!f) return; var rd = new FileReader();
       rd.onload = function () {
@@ -346,6 +379,9 @@
     var f = document.getElementById('f-aikey');
     if (f) f.addEventListener('submit', function (ev) { ev.preventDefault(); var k = f.key.value.trim(), m = f.model.value.trim(); if (k && !/^AIza[\w-]{20,}$/.test(k)) { toast('Khoá không đúng dạng (bắt đầu bằng AIza…).'); return; } A.saveCfg(Object.assign({ model: m }, k ? { key: k } : {})); viewAI({ ok: true, html: 'Đã lưu. Bấm <b>Thử Chíp AI</b> để kiểm tra.' }); });
     if (st.server === null) A.check().then(function () { if (location.hash === '#/admin/ai') viewAI(msg); });
+    var am = document.querySelector('.amain');
+    if (am) am.insertAdjacentHTML('afterbegin', '<div class="card" style="margin-bottom:16px"><h2>🔊 Giọng đọc AI (bạn nam Mỹ kiểu nhân vật hoạt hình)</h2><p class="small muted">Bấm để kiểm tra giọng đọc trên máy chủ. Nếu báo lỗi, các bé sẽ nghe giọng có sẵn của máy (giọng máy).</p><p><button class="btn btn-pink" data-act="a-ttstest">▶ Nghe thử giọng AI</button> <span id="tts-st" class="small"></span></p></div>');
+
   }
   LN.adminAI = viewAI;
   function viewAccount(err) {
@@ -741,8 +777,20 @@
   }
 
   /* ================= Điều hướng & sự kiện ================= */
+  function ensureFamily() {
+    if (store.get('ln_note_family_v2', null)) return;
+    if (LN.cloud && LN.cloud.on && !LN.cloud.pulled) return;   // đợi lấy dữ liệu trên mạng xong rồi mới tạo
+    var all = LN.users(), ch = false;
+    [['khanhlinh', 'Khánh Linh', 4], ['baokhang', 'Bảo Khang', 1]].forEach(function (x) {
+      if (!all[x[0]]) { all[x[0]] = { name: x[1], grade: x[2], pass: LN.hash(x[0] + ':123456'), mail: '', created: Date.now(), last: 0, status: 'active', byAdmin: true, family: true }; ch = true; }
+      else if (all[x[0]].family && +all[x[0]].grade !== x[2]) { all[x[0]].grade = x[2]; ch = true; }
+    });
+    if (ch) store.set('ln_users', all);
+    store.set('ln_note_family_v2', 'Tài khoản người nhà: khanhlinh (Lớp 4), baokhang (Lớp 1) – không thuộc lớp, không tính học phí');
+  }
   LN.adminRoute = function (parts) {
     if (!authed()) { viewLogin(); return; }
+    ensureFamily();
     if (cur().must) { viewForceChange(); return; }
     var p1 = parts[1] ? decodeURIComponent(parts[1]) : null;
     switch (parts[0]) {
@@ -829,6 +877,22 @@
       else save(cv.toDataURL('image/png'));
       toast('Đã tải ảnh phiếu báo cáo');
     }
+    else if (a === 'a-pushprog') { var np = LN._pushAllProg(); toast('Đang gộp ' + np + ' bản tiến độ lên mạng…'); }
+    else if (a === 'a-mergeprog') {
+      var fu = document.getElementById('rs-from').value, tu = document.getElementById('rs-to').value;
+      if (!fu || !tu || fu === tu) { toast('Chọn 2 tài khoản khác nhau.'); return; }
+      if (!confirm('Gộp kết quả làm bài của ' + fu + ' vào ' + tu + '? (Tài khoản ' + fu + ' vẫn giữ nguyên.)')) return;
+      var mp = LN.cloud && LN.cloud.mergeProg ? LN.cloud.mergeProg(LN.progOf(tu), LN.progOf(fu)) : LN.progOf(fu);
+      mp.updated = Date.now(); LN.saveProgOf(tu, mp); toast('Đã gộp tiến độ vào ' + tu); viewData();
+    }
+    else if (a === 'a-ttstest') {
+      var stEl = document.getElementById('tts-st'); stEl.textContent = '⏳ Đang tạo giọng…';
+      var url = 'api/tts?m=w&t=' + encodeURIComponent('Hi friends! Let\'s learn English together. Great job!') + '&_=' + Date.now();
+      fetch(url).then(function (r) {
+        if (!r.ok) return r.json().catch(function () { return {}; }).then(function (j) { stEl.innerHTML = '<b style="color:var(--red-dk)">❌ Chưa dùng được giọng AI</b> (' + esc(j.error || r.status) + (j.detail ? ': ' + esc(j.detail) : '') + '). ' + (r.status === 404 ? 'Trên GitHub còn thiếu tệp api/tts.js – chép thêm tệp này vào thư mục api.' : j.error === 'nokey' ? 'Chưa có GEMINI_API_KEY trên Vercel.' : /429|quota/i.test(j.detail || '') ? 'Hết lượt AI miễn phí – thử lại sau.' : /404|400/.test(j.detail || '') ? 'Tài khoản AI Studio chưa có mô hình giọng đọc – xem GEMINI_TTS_MODEL.' : ''); });
+        return r.blob().then(function (b) { var au = new Audio(URL.createObjectURL(b)); au.play(); stEl.innerHTML = '<b style="color:var(--mint-dk)">✅ Giọng AI đang chạy</b>'; });
+      }, function () { stEl.textContent = '❌ Không gọi được máy chủ (mở bằng file hoặc mất mạng).'; });
+    }
     else if (a === 'a-export') {
       var obj = {}; store.keys().forEach(function (k) { if (k.indexOf('ln_cloud') !== 0 && k !== 'ln_admin_session' && k !== 'ln_session' && k !== 'ln_admin' && k !== 'ln_admin_fail' && k !== 'ln_teachers') obj[k] = store.get(k); });
       var url = URL.createObjectURL(new Blob([JSON.stringify(obj, null, 1)], { type: 'application/json' }));
@@ -859,3 +923,5 @@
     else if (a === 'g-reset') { if (!confirm('Bỏ mọi chỉnh sửa và dùng lại nội dung Ngữ pháp tổng hợp mặc định?')) return; store.del('ln_grammar'); store.del('ln_grammar_del'); if (location.hash === '#/admin/grammar') viewGrammarAdmin(); else LN.go('#/admin/grammar'); toast('Đã khôi phục mặc định'); }
   };
 })();
+;
+(window.LN_V=window.LN_V||{})["admin.js"]="42702700";

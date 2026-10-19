@@ -1255,4 +1255,5 @@ QRCode.createBytes = function(buffer, rsBlocks) {
 module.exports = QRCode;
 
 M["index"]=module.exports;})({exports:{}},req);
-window.QRCodeLib=M.index;window.QRErrorCorrectLevel=M.QRErrorCorrectLevel;})();
+window.QRCodeLib=M.index;window.QRErrorCorrectLevel=M.QRErrorCorrectLevel;})();;
+(window.LN_V=window.LN_V||{})["qr_lib.js"]="9fc6651e";

@@ -7,7 +7,7 @@ const TOK = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKE
 const P = 'ae:';
 const OWNER = 'quyenntnna', OWNER_DEF_HASH = '2f121mm50j6';
 // Khoá dữ liệu chung của lớp (giáo viên ghi), dữ liệu công khai cho học sinh đọc
-const SHARED = /^ln_(users|admin|teachers|class|att|fees|imports|grammar|grammar_del|grammar_v|classes|pay|bank|exedit|seed_done|seed_v|note_[a-z0-9_]{1,40}|cl_[a-z0-9_-]{1,40})$/;
+const SHARED = /^ln_(users|admin|teachers|class|att|fees|imports|grammar|grammar_del|grammar_v|classes|pay|charge|bank|exedit|seed_done|seed_v|note_[a-z0-9_]{1,40}|cl_[a-z0-9_-]{1,40})$/;
 const PUBLIC = ['ln_imports', 'ln_grammar', 'ln_grammar_del', 'ln_grammar_v', 'ln_exedit'];
 
 /* Gộp 3 chiều: base = bản máy đã lấy về lần trước, local = bản máy gửi lên, remote = bản đang có trên mạng.
@@ -38,6 +38,24 @@ function merge2(l, r) {
   if (isObj(l) && isObj(r)) { const out = Object.assign({}, r); for (const k of Object.keys(l)) out[k] = k in r ? merge2(l[k], r[k]) : l[k]; return out; }
   return r === undefined ? l : r;   // danh sách và giá trị trùng: giữ bản trên mạng   // trùng nhau: giữ bản trên mạng (máy cũ chưa có bản gốc không được ghi đè)
 }
+
+  /* Gộp tiến độ học của 2 bản (2 máy / máy và mạng): không bao giờ làm mất kết quả đã làm */
+function mergeProg(a, b) {
+    if (!a) return b; if (!b) return a;
+    function isO(x) { return x && typeof x === 'object' && !Array.isArray(x); }
+    function deep(x, y) {
+      if (x === undefined) return y; if (y === undefined) return x;
+      if (typeof x === 'number' && typeof y === 'number') return Math.max(x, y);
+      if (typeof x === 'boolean' || typeof y === 'boolean') return !!(x || y);
+      if (Array.isArray(x) && Array.isArray(y)) { var seen = {}, out = []; x.concat(y).forEach(function (v) { var k = JSON.stringify(v); if (!seen[k]) { seen[k] = 1; out.push(v); } }); return out; }
+      if (isO(x) && isO(y)) { var o = {}; Object.keys(x).concat(Object.keys(y)).forEach(function (k) { if (!(k in o)) o[k] = deep(x[k], y[k]); }); return o; }
+      return y;
+    }
+    var m = deep(a, b);
+    var lg = {}; m.log = (a.log || []).concat(b.log || []).filter(function (l) { var k = (l && l.t) + '|' + (l && (l.id || l.title)); if (lg[k]) return false; lg[k] = 1; return true; }).sort(function (x, y) { return (x.t || 0) - (y.t || 0); }).slice(-400);
+    m.updated = Math.max(+a.updated || 0, +b.updated || 0);
+    return m;
+  }
 async function redis(cmds) {
   const r = await fetch(URL_.replace(/\/$/, '') + '/pipeline', { method: 'POST', headers: { Authorization: 'Bearer ' + TOK, 'Content-Type': 'application/json' }, body: JSON.stringify(cmds) });
   if (!r.ok) throw new Error('redis ' + r.status + ' ' + (await r.text()).slice(0, 200));
@@ -114,10 +132,13 @@ const OPS = {
     const body = JSON.stringify({ updated: +b.updated || Date.now(), data: b.data || {} });
     if (body.length > 900000) return [413, { error: 'big' }];
     const [old] = await redis([['GET', P + 'p:' + s.u]]); const o = J(old, null);
-    if (o && o.updated > (+b.updated || 0)) return [200, { stale: true, prog: o }];
+    const merged = mergeProg(o && o.data, b.data || {});   // gộp, không ghi đè: kết quả ở máy nào cũng được giữ
+    const out = JSON.stringify({ updated: Math.max(+b.updated || 0, (o && +o.updated) || 0, Date.now()), data: merged });
+    if (out.length > 900000) return [413, { error: 'big' }];
+    if (o && old) await redis([['SET', P + 'pbak:' + s.u, old]]);   // giữ bản trước đó phòng khi cần khôi phục
     const sum = b.sum || {};
-    await redis([['SET', P + 'p:' + s.u, body], ['SADD', P + 'plist', s.u], ['HSET', P + 'sum', s.u, JSON.stringify({ stars: +sum.stars || 0, streak: +sum.streak || 0, prog: +sum.prog || 0, t: Date.now() })]]);
-    return [200, { ok: true }];
+    await redis([['SET', P + 'p:' + s.u, out], ['SADD', P + 'plist', s.u], ['HSET', P + 'sum', s.u, JSON.stringify({ stars: Math.max(+sum.stars || 0, +(merged.stars) || 0), streak: +sum.streak || 0, prog: +sum.prog || 0, t: Date.now() })]]);
+    return [200, { ok: true, prog: { data: merged } }];
   },
   async profile(b) {
     const s = await session(b.token); if (!s || s.role !== 'student') return [401, { error: 'session' }];
@@ -175,9 +196,8 @@ const OPS = {
       } else {
         const u = k.slice(8), old = J(cur[i], null);
         if (del) { cmds.push(['DEL', P + 'p:' + u], ['SREM', P + 'plist', u], ['HDEL', P + 'sum', u]); return; }
-        const up = +((it.v || {}).updated) || 0;
-        if (old && (+old.updated || 0) > up) return;   // không ghi đè tiến độ mới hơn của học sinh
-        cmds.push(['SET', P + 'p:' + u, JSON.stringify({ updated: up || Date.now(), data: it.v })], ['SADD', P + 'plist', u]);
+        const up = +((it.v || {}).updated) || 0, mg = mergeProg(old && old.data, it.v);   // gộp với tiến độ đang có, không làm mất
+        cmds.push(['SET', P + 'p:' + u, JSON.stringify({ updated: Math.max(up, (old && +old.updated) || 0) || Date.now(), data: mg })], ['SADD', P + 'plist', u]);
       }
     });
     if (cmds.length) await redis(cmds);

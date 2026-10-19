@@ -80,3 +80,5 @@
   var API = { build: build, call: call, parse: parse, tasks: Object.keys(TASKS), defaultModels: ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.0-flash'] };
   if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.AIPROMPTS = API;
 })(this);
+;
+(window.LN_V=window.LN_V||{})["ai_prompts.js"]="888af3f0";

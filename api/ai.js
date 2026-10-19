@@ -38,3 +38,5 @@ module.exports = async (req, res) => {
     res.status(st).json({ error: st === 429 ? 'Hết lượt AI miễn phí trong phút này, thử lại sau ít phút nhé.' : 'AI chưa trả lời được.', detail: String(e && e.message || e).slice(0, 300) });
   }
 };
+
+module.exports.config = { maxDuration: 30 };

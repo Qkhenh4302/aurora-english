@@ -129,3 +129,5 @@
     }).catch(function (e) { x.disabled = false; x.textContent = '🤖 Hỏi Chíp vì sao?'; LN.toast(e.message || 'Chíp chưa trả lời được.'); });
   }, true);
 })();
+;
+(window.LN_V=window.LN_V||{})["ai.js"]="2a2d5128";

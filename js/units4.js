@@ -239,3 +239,5 @@ window.GRAMMAR_DEFAULT = [
     table: [['quick → quickly', 'nhanh', 'They run quickly.'], ['loud → loudly', 'to', 'Lions roar loudly.'], ['beautiful → beautifully', 'đẹp', 'She dances beautifully.']],
     examples: ['Birds sing merrily.'] }
 ];
+;
+(window.LN_V=window.LN_V||{})["units4.js"]="87455823";
