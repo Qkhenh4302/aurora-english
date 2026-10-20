@@ -1,4 +1,8 @@
-/* Aurora English — giọng đọc tiếng Anh (Gemini TTS, giọng bạn nam Mỹ vui vẻ).
+/* Aurora English — giọng đọc tiếng Anh, MỘT giọng duy nhất cho mọi máy (Windows, Mac, iPad, điện thoại).
+   Ưu tiên Google Cloud Text-to-Speech (nhanh ~1 giây, miễn phí 1 triệu ký tự/tháng, file MP3 nhỏ):
+     GOOGLE_TTS_KEY   = khoá API của Google Cloud đã bật "Cloud Text-to-Speech API"
+     GOOGLE_TTS_VOICE = en-US-Chirp3-HD-Puck (mặc định — cùng giọng Puck với Gemini)
+   Không có GOOGLE_TTS_KEY → dùng Gemini TTS (chậm hơn, giới hạn lượt rất thấp).
    GET /api/tts?t=<câu>&m=w|p  → audio/wav. Mỗi câu chỉ tạo một lần: lưu trong Upstash Redis + bộ nhớ đệm Vercel,
    lần sau mọi học sinh nghe ngay, không tốn lượt AI. Lỗi / hết lượt → 503, trình duyệt tự dùng giọng có sẵn. */
 const crypto = require('crypto');
@@ -8,12 +12,46 @@ const TOK = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKE
 const VOICE = process.env.TTS_VOICE || 'Puck';   // Puck: giọng nam trẻ, tươi vui (thử thêm: Fenrir – hào hứng)
 const MODELS = (process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts,gemini-2.5-flash-tts').split(',').map((s) => s.trim()).filter(Boolean);
 const STYLE = {
-  w: 'You are a lively animated cartoon character in a fun kids\' learning game (like the friendly characters in AdaptedMind). Read aloud in the bright, high, playful voice of an energetic 8-year-old American boy cartoon hero, super enthusiastic and smiling: big smile, bouncy expressive intonation, crisp clear standard American pronunciation, at an easy pace for 6-year-olds:',
-  p: 'You are a friendly animated cartoon character in a kids\' learning game, reading a short story to young English learners. Use a bright, warm, cheerful young American boy\'s voice with expressive storytelling intonation. Read slowly and clearly in standard American English, pause briefly at commas and a little longer at the end of each sentence:',
-  c: 'You are an excited animated cartoon character in a kids\' learning game cheering for a child. Say this with huge energy, joy and a big smile, in a playful young American boy\'s voice:'
+  /* Mô tả giọng mẫu cô gửi (video AdaptedMind / Monster Math): nhân vật quái vật hoạt hình dạy toán */
+  w: 'Voice a goofy, lovable cartoon monster teacher in a kids\' math game (like the purple monster in AdaptedMind / Monster Math). Bright, fairly high, slightly nasal cartoon voice, General American accent. Very bouncy, sing-song intonation that jumps up and down, huge friendly smile, playful and super encouraging, crisp clear words, lively medium-fast pace with little playful pauses. Say exactly this:',
+  p: 'Voice the same goofy, lovable cartoon monster teacher from a kids\' learning game, now reading a short story to young children. Bright, warm, fairly high cartoon voice, General American accent, expressive storytelling, a bit slower and very clear, short pause at commas and a longer pause at each full stop. Read exactly this:',
+  c: 'Voice the same goofy cartoon monster teacher cheering a child who just answered. Burst with excitement and joy, bouncy sing-song, big smile, bright fairly high cartoon voice, General American accent. Say exactly this:'
 };
-const SV = process.env.TTS_STYLE_V || '3';   // đổi số này để tạo lại toàn bộ giọng
+const SV = process.env.TTS_STYLE_V || '4';   // đổi số này để tạo lại toàn bộ giọng
 let BAD = 0;   // hết lượt: tạm dừng gọi AI một lúc
+const GKEY = process.env.GOOGLE_TTS_KEY || (process.env.TTS_ENGINE === 'google' ? KEY : '');
+/* Các giọng cô có thể chọn (trang quản trị → AI → Chọn giọng). Giọng "bé trai hoạt hình": giọng nam trẻ của Google nâng cao tông. */
+const PRESETS = {
+  /* "am": khớp giọng mẫu cô gửi (nhân vật quái vật tím dạy toán): tông trung bình ~270 Hz, lên xuống rất nhiều, nói nhanh vừa, rất hào hứng */
+  am1:   { v: 'en-US-Neural2-H', pitch: 5, rate: { w: 1.0, p: 0.9, c: 1.1 }, name: '★ Giống video mẫu 1 – nhân vật hoạt hình vui (khuyên dùng)' },
+  am2:   { v: 'en-US-Neural2-I', pitch: 13, rate: { w: 1.02, p: 0.92, c: 1.1 }, name: '★ Giống video mẫu 2 – quái vật ngộ nghĩnh (từ giọng nam)' },
+  am3:   { v: 'en-US-Neural2-G', pitch: 5, rate: { w: 1.0, p: 0.9, c: 1.1 }, name: '★ Giống video mẫu 3 – tông sáng, tròn tiếng' },
+  boy:   { v: 'en-US-Neural2-I', pitch: 5.5, rate: { w: 0.95, p: 0.86, c: 1.06 }, name: 'Bé trai hoạt hình (vui, rõ)' },
+  boy2:  { v: 'en-US-Neural2-J', pitch: 7, rate: { w: 0.97, p: 0.88, c: 1.08 }, name: 'Bé trai tinh nghịch (tông cao hơn)' },
+  boy3:  { v: 'en-US-Wavenet-I', pitch: 6, rate: { w: 0.95, p: 0.86, c: 1.06 }, name: 'Bé trai nhẹ nhàng' },
+  boy4:  { v: 'en-US-Neural2-D', pitch: 8, rate: { w: 0.97, p: 0.88, c: 1.08 }, name: 'Nhân vật hoạt hình (tông rất cao)' },
+  puck:  { v: 'en-US-Chirp3-HD-Puck', rate: { w: 0.92, p: 0.84, c: 1.04 }, name: 'Anh trai trẻ, vui (tự nhiên nhất)' },
+  fenrir:{ v: 'en-US-Chirp3-HD-Fenrir', rate: { w: 0.92, p: 0.84, c: 1.04 }, name: 'Anh trai hào hứng' },
+  gem:   { gem: 1, name: '★ Gemini – diễn y kiểu nhân vật trong video mẫu (biểu cảm nhất, nhưng chậm, ít lượt)' }
+};
+const DEF = process.env.TTS_PRESET && PRESETS[process.env.TTS_PRESET] ? process.env.TTS_PRESET : 'am1';
+function presetOf(v) { const p = PRESETS[v] ? v : DEF; return (PRESETS[p].gem || !GKEY) ? (KEY ? 'gem' : '') : p; }
+const ENGINE = GKEY ? 'g' : KEY ? 'm' : '';
+async function ggen(text, mode, pre) {
+  const P = PRESETS[pre], url = 'https://texttospeech.googleapis.com/v1/text:synthesize?key=' + encodeURIComponent(GKEY);
+  const body = (full) => JSON.stringify({ input: { text }, voice: { languageCode: P.v.slice(0, 5), name: P.v }, audioConfig: Object.assign({ audioEncoding: 'MP3', sampleRateHertz: 24000 }, full ? { speakingRate: P.rate[mode] } : {}, full && P.pitch ? { pitch: P.pitch } : {}) });
+  let r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body(1) });
+  if (r.status === 400) r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body(0) });
+  if (!r.ok) { const e = new Error('google ' + r.status + ' ' + (await r.text()).slice(0, 160)); e.status = r.status; throw e; }
+  const j = await r.json(); if (!j.audioContent) throw new Error('google noaudio');
+  return Buffer.from(j.audioContent, 'base64');
+}
+function idOf(text, mode, pre) { return crypto.createHash('md5').update((pre === 'gem' ? SV + '|' + VOICE : 'g2|' + pre + '|' + PRESETS[pre].v + '|' + (PRESETS[pre].pitch || 0)) + '|' + mode + '|' + String(text).replace(/\s+/g, ' ').trim().toLowerCase()).digest('hex'); }
+function readBody(req) {
+  if (req.body && typeof req.body === 'object') return Promise.resolve(req.body);
+  if (typeof req.body === 'string') { try { return Promise.resolve(JSON.parse(req.body)); } catch (e) { return Promise.resolve({}); } }
+  return new Promise((ok) => { let d = ''; req.on('data', (c) => { d += c; }); req.on('end', () => { try { ok(JSON.parse(d || '{}')); } catch (e) { ok({}); } }); });
+}
 
 async function redis(cmds) {
   if (!URL_ || !TOK) return cmds.map(() => null);
@@ -47,20 +85,37 @@ async function gen(text, mode) {
 }
 
 module.exports = async (req, res) => {
-  const q = req.query || {}, text = String(q.t || '').replace(/\s+/g, ' ').trim().slice(0, 400), mode = q.m === 'p' ? 'p' : q.m === 'c' ? 'c' : 'w';
-  if (q.check) { res.setHeader('Cache-Control', 'no-store'); res.status(200).json({ ok: !!KEY, voice: VOICE, paused: Date.now() < BAD }); return; }
+  const q = req.query || {};
+  if (req.method === 'POST') {   // tạo sẵn: cho biết câu nào chưa có giọng
+    const b = await readBody(req), items = Array.isArray(b.items) ? b.items.slice(0, 200) : [];
+    const pre = presetOf(b.v);
+    const ids = pre ? items.map((x) => idOf(String(x.t || '').slice(0, 400), x.m === 'p' ? 'p' : x.m === 'c' ? 'c' : 'w', pre)) : [];
+    const got = ids.length ? await redis([['MGET'].concat(ids.map((i) => 'ae:tts:' + i))]).then((r) => r[0] || []) : [];
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).json({ missing: items.map((_, k) => k).filter((k) => !got[k]), engine: pre === 'gem' ? 'm' : pre ? 'g' : '', preset: pre });
+    return;
+  }
+  const text = String(q.t || '').replace(/\s+/g, ' ').trim().slice(0, 400), mode = q.m === 'p' ? 'p' : q.m === 'c' ? 'c' : 'w';
+  if (q.check) { res.setHeader('Cache-Control', 'no-store'); const pre = presetOf(q.v); res.status(200).json({ ok: !!pre, engine: pre === 'gem' ? 'm' : pre ? 'g' : '', preset: pre, def: DEF, google: !!GKEY, presets: Object.keys(PRESETS).filter((k) => GKEY || PRESETS[k].gem).map((k) => ({ id: k, name: PRESETS[k].name })), paused: Date.now() < BAD }); return; }
   if (!text) { res.status(400).json({ error: 'text' }); return; }
-  if (!KEY) { res.setHeader('Cache-Control', 'no-store'); res.status(503).json({ error: 'nokey' }); return; }
-  const id = crypto.createHash('md5').update(SV + '|' + VOICE + '|' + mode + '|' + text.toLowerCase()).digest('hex'), rk = 'ae:tts:' + id;
+  if (!ENGINE) { res.setHeader('Cache-Control', 'no-store'); res.status(503).json({ error: 'nokey' }); return; }
+  const pre = presetOf(q.v);
+  const id = idOf(text, mode, pre), rk = 'ae:tts:' + id;
   try {
     const [hit] = await redis([['GET', rk]]);
-    let buf = hit ? Buffer.from(hit, 'base64') : null;
+    let buf = null, type = 'audio/wav';
+    if (hit) { if (hit.slice(0, 4) === 'mp3:') { buf = Buffer.from(hit.slice(4), 'base64'); type = 'audio/mpeg'; } else buf = Buffer.from(hit, 'base64'); }
     if (!buf) {
-      if (Date.now() < BAD) { res.setHeader('Cache-Control', 'no-store'); res.status(503).json({ error: 'busy' }); return; }
-      buf = await gen(text, mode);
-      if (buf.length < 700000) await redis([['SET', rk, buf.toString('base64')]]);
+      if (pre !== 'gem') {
+        buf = await ggen(text, mode, pre); type = 'audio/mpeg';
+        if (buf.length < 700000) await redis([['SET', rk, 'mp3:' + buf.toString('base64')]]);
+      } else {
+        if (Date.now() < BAD) { res.setHeader('Cache-Control', 'no-store'); res.status(503).json({ error: 'busy' }); return; }
+        buf = await gen(text, mode);
+        if (buf.length < 700000) await redis([['SET', rk, buf.toString('base64')]]);
+      }
     }
-    res.setHeader('Content-Type', 'audio/wav');
+    res.setHeader('Content-Type', type);
     res.setHeader('Cache-Control', 'public, max-age=31536000, s-maxage=31536000, immutable');
     res.status(200).send(buf);
   } catch (e) {
@@ -69,3 +124,5 @@ module.exports = async (req, res) => {
     res.status(503).json({ error: 'tts', detail: String(e && e.message || e).slice(0, 200) });
   }
 };
+
+module.exports.config = { maxDuration: 30 };

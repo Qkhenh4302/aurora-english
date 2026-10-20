@@ -81,7 +81,7 @@
     if (/^(grammar|ai|data|account|roster)$/.test(active)) active = 'caidat';
     function nl(id, href, icon, label) { return '<a href="' + href + '" class="' + (active === id ? 'on' : '') + '">' + ic(icon, 19) + label + '</a>'; }
     LN.render('<div class="adm"><aside class="aside"><a class="brand" href="#/admin">' + LN.logo(36) + '<span class="bname">Aurora <b>English</b></span></a>' +
-      '<span class="aver">Bản cập nhật 15 · 20/10</span><span class="lb">Quản lý</span>' + nl('lop', '#/admin', 'users', 'Lớp học') + nl('hocphi', '#/admin/hocphi', 'money', 'Học phí') + nl('home', '#/admin/tiendo', 'chart', 'Tiến độ học app') + nl('baitap', '#/admin/baitap', 'book', 'Làm bài & sửa bài') + nl('caidat', '#/admin/caidat', 'key', 'Cài đặt') +
+      '<span class="aver">Bản cập nhật 21 · 20/10</span><span class="lb">Quản lý</span>' + nl('lop', '#/admin', 'users', 'Lớp học') + nl('hocphi', '#/admin/hocphi', 'money', 'Học phí') + nl('home', '#/admin/tiendo', 'chart', 'Tiến độ học app') + nl('baitap', '#/admin/baitap', 'book', 'Làm bài & sửa bài') + nl('ai', '#/admin/ai', 'sound', '🔊 Giọng đọc & AI') + nl('caidat', '#/admin/caidat', 'key', 'Cài đặt') +
       '<span class="lb">Khác</span><a href="#/">' + ic('eye', 19) + 'Mở trang học sinh</a><a href="#" data-act="a-logout">' + ic('out', 19) + 'Đăng xuất' + (cur() ? ' (' + esc(cur().user) + ')' : '') + '</a></aside>' +
       '<main class="amain">' + staleWarn() + body + '</main></div>');
   }
@@ -312,6 +312,36 @@
   }
 
   /* ================= Dữ liệu & tài khoản ================= */
+  /* ---- Nạp file sao lưu theo kiểu GỘP (file thắng ở từng ô, không xoá gì đang có) ---- */
+  function mergeIn(cur, inc) {
+    if (Array.isArray(inc)) {
+      if (!Array.isArray(cur) || !inc.every(function (x) { return x && typeof x === 'object' && x.id != null; })) return inc;
+      var out = cur.slice(), pos = {}; out.forEach(function (x, i) { if (x && x.id != null) pos[x.id] = i; });
+      inc.forEach(function (x) { if (pos[x.id] != null) out[pos[x.id]] = mergeIn(out[pos[x.id]], x); else out.push(x); });
+      return out;
+    }
+    if (inc && typeof inc === 'object') {
+      if (!cur || typeof cur !== 'object' || Array.isArray(cur)) return inc;
+      var o = Object.assign({}, cur); Object.keys(inc).forEach(function (k) { o[k] = mergeIn(cur[k], inc[k]); }); return o;
+    }
+    return inc;
+  }
+  var FEEK = /^ln_(classes|cl_[a-z0-9_-]{1,40}|pay|charge|fees|att|class)$/;
+  LN.importMerge = function (obj, replaceFees) {
+    var n = 0;
+    if (replaceFees) store.keys().forEach(function (k) { if (/^ln_cl_/.test(k) && obj[k] === undefined) { store.del(k); n++; } });
+    var SKIP = /^ln_(cloud|admin_session|session|admin|admin_fail|teachers|settings|gv_grade|spk_guide|spkq_guide|prog___gv)/;
+    Object.keys(obj).forEach(function (k) {
+      if (k.indexOf('ln_') !== 0 || SKIP.test(k)) return;
+      var inc = obj[k], cur = store.get(k, null), val;
+      if (replaceFees && FEEK.test(k)) val = inc;
+      else if (/^ln_prog_/.test(k)) val = LN.cloud && LN.cloud.mergeProg ? LN.cloud.mergeProg(cur || {}, inc || {}) : (cur || inc);
+      else if (k === 'ln_users') { val = mergeIn(cur, inc); Object.keys(val || {}).forEach(function (u) { if (cur && cur[u] && inc[u]) val[u].last = Math.max(cur[u].last || 0, inc[u].last || 0); }); }
+      else val = mergeIn(cur, inc);
+      store.set(k, val); n++;
+    });
+    return n;
+  };
   /* ---- Khôi phục tiến độ làm bài ---- */
   function pstat(un) { var p = LN.progOf(un); return { ex: Object.keys(p.ex || {}).length, stars: p.stars || 0, days: Object.keys(p.days || {}).length, up: p.updated || 0 }; }
   function restoreCard() {
@@ -340,7 +370,7 @@
     var demo = Object.keys(LN.users()).filter(function (u) { return LN.users()[u].demo; }).length;
     shell('data', '<h1 style="margin-bottom:6px">Dữ liệu & sao lưu</h1><p class="muted" style="margin-bottom:18px">' + (LN.cloud && LN.cloud.on ? '☁️ Dữ liệu đang được <b>lưu trên mạng</b> và đồng bộ mọi máy; máy này giữ thêm một bản sao. ' : 'Bản demo lưu mọi thứ trong trình duyệt này. ') + '(' + Object.keys(LN.users()).length + ' học sinh, khoảng ' + Math.round(size / 1024) + ' KB). Xoá dữ liệu trình duyệt là mất — nên sao lưu thường xuyên.</p>' +
       '<div class="row"><div class="card grow"><h2>Sao lưu</h2><p class="muted small" style="margin-bottom:14px">Tải toàn bộ tài khoản, tiến độ, nhận xét và Ngữ pháp tổng hợp về một file .json.</p><button class="btn btn-pink" data-act="a-export">' + ic('down', 18) + 'Tải file sao lưu</button>' +
-      '<h2 style="margin-top:24px">Khôi phục</h2><p class="muted small" style="margin-bottom:10px">Chọn file sao lưu để nạp lại. Dữ liệu hiện tại sẽ bị thay thế.</p><label class="btn" for="a-import">' + ic('up', 18) + 'Chọn file sao lưu…</label><input type="file" id="a-import" accept=".json,application/json" class="sr-only"></div>' +
+      '<h2 style="margin-top:24px">Khôi phục</h2><p class="muted small" style="margin-bottom:10px">Chọn file sao lưu để nạp lên. Dữ liệu trong file được gộp vào dữ liệu đang có (không xoá học sinh hay kết quả làm bài).</p><label class="btn" for="a-import">' + ic('up', 18) + 'Chọn file sao lưu…</label><input type="file" id="a-import" accept=".json,application/json" class="sr-only"></div>' +
       '<div class="card side"><h2>Dữ liệu mẫu</h2><p class="muted small" style="margin-bottom:14px">Tạo 4 học sinh mẫu có tiến độ khác nhau để xem thử báo cáo. Có nhãn "mẫu", xoá được bất kỳ lúc nào.</p>' +
       '<button class="btn btn-yel btn-block" data-act="a-demo">Tạo dữ liệu mẫu</button>' + (demo ? '<button class="btn btn-block" style="margin-top:10px" data-act="a-undemo">Xoá ' + demo + ' học sinh mẫu</button>' : '') + '</div></div>');
     document.querySelector('.amain').insertAdjacentHTML('beforeend', restoreCard());
@@ -350,10 +380,11 @@
       rd.onload = function () {
         try {
           var obj = JSON.parse(rd.result); if (!obj || typeof obj !== 'object' || !obj.ln_users) throw new Error('bad');
-          if (!confirm('Thay toàn bộ dữ liệu hiện tại bằng file "' + f.name + '"?')) return;
-          store.keys().forEach(function (k) { if (k !== 'ln_admin_session' && k !== 'ln_admin' && k !== 'ln_session' && k !== 'ln_teachers' && k !== 'ln_admin_fail' && k.indexOf('ln_prog_') !== 0 && k.indexOf('ln_cloud') !== 0 && obj[k] === undefined) store.del(k); });
-          Object.keys(obj).forEach(function (k) { if (k.indexOf('ln_') === 0 && k.indexOf('ln_cloud') !== 0 && k !== 'ln_admin_session' && k !== 'ln_session' && k !== 'ln_admin' && k !== 'ln_admin_fail' && k !== 'ln_teachers') store.set(k, obj[k]); });
-          toast('Đã khôi phục dữ liệu'); LN.route();
+          LN._impObj = obj; ev.target.value = '';
+          var box = document.getElementById('imp-box'); if (box) box.remove();
+          document.getElementById('a-import').closest('.card').insertAdjacentHTML('beforeend', '<div id="imp-box" class="note" style="margin-top:12px"><p style="margin-bottom:8px"><b>Đã đọc file ' + esc(f.name) + '.</b> Chọn cách nạp:</p>' +
+            '<p style="margin-bottom:8px"><button class="btn btn-pink" data-act="a-imp-rep">Làm cho web GIỐNG HỆT file (lớp, điểm danh, học phí, đã đóng)</button><br><span class="small muted">Phần lớp học / điểm danh / học phí / đã đóng trên web được thay bằng đúng như trong file. Tài khoản học sinh và kết quả làm bài vẫn giữ nguyên (gộp).</span></p>' +
+            '<p><button class="btn" data-act="a-imp-mrg">Chỉ gộp thêm</button> <span class="small muted">Giữ cả những gì web đang có mà file không có.</span></p></div>');
         } catch (e) { toast('File không đúng định dạng sao lưu của Aurora English.'); }
       };
       rd.readAsText(f);
@@ -378,12 +409,29 @@
         '<div><button class="btn btn-pink" type="submit">Lưu khoá</button> ' + (c.key ? '<button class="btn" type="button" data-act="ai-del">Xoá khoá</button>' : '') + '</div></form></div>' : ''));
     var f = document.getElementById('f-aikey');
     if (f) f.addEventListener('submit', function (ev) { ev.preventDefault(); var k = f.key.value.trim(), m = f.model.value.trim(); if (k && !/^AIza[\w-]{20,}$/.test(k)) { toast('Khoá không đúng dạng (bắt đầu bằng AIza…).'); return; } A.saveCfg(Object.assign({ model: m }, k ? { key: k } : {})); viewAI({ ok: true, html: 'Đã lưu. Bấm <b>Thử Chíp AI</b> để kiểm tra.' }); });
+    drawVoicePick();
     if (st.server === null) A.check().then(function () { if (location.hash === '#/admin/ai') viewAI(msg); });
     var am = document.querySelector('.amain');
-    if (am) am.insertAdjacentHTML('afterbegin', '<div class="card" style="margin-bottom:16px"><h2>🔊 Giọng đọc AI (bạn nam Mỹ kiểu nhân vật hoạt hình)</h2><p class="small muted">Bấm để kiểm tra giọng đọc trên máy chủ. Nếu báo lỗi, các bé sẽ nghe giọng có sẵn của máy (giọng máy).</p><p><button class="btn btn-pink" data-act="a-ttstest">▶ Nghe thử giọng AI</button> <span id="tts-st" class="small"></span></p></div>');
+    if (am) am.insertAdjacentHTML('afterbegin', '<div class="card" style="margin-bottom:16px"><h2>🔊 Giọng đọc AI (bạn nam Mỹ kiểu nhân vật hoạt hình)</h2><p class="small muted">Bấm để kiểm tra giọng đọc trên máy chủ. Nếu báo lỗi, các bé sẽ nghe giọng có sẵn của máy (giọng máy).</p><p><button class="btn btn-pink" data-act="a-ttstest">▶ Nghe thử giọng AI</button> <span id="tts-st" class="small"></span></p>' +
+      '<h3 style="margin:14px 0 4px">Chọn giọng cho cả trang web</h3><p class="small muted">Bấm ▶ nghe từng giọng, ưng giọng nào bấm <b>Dùng giọng này</b> — mọi máy của các bé sẽ đổi sang giọng đó. Sau đó bấm <b>Tạo sẵn giọng đọc</b> bên dưới.</p><div id="tts-pick" class="small muted">Đang tải danh sách giọng…</div>' +
+      '<h3 style="margin:14px 0 4px">Tạo sẵn giọng đọc cho toàn bộ bài (mọi máy nghe cùng một giọng, bấm là nghe ngay)</h3><p class="small muted">Chỉ cần làm một lần (và sau khi thêm bài mới). Để máy chạy đến khi xong; đóng trang thì lần sau bấm lại sẽ chạy tiếp phần còn thiếu.</p>' +
+      '<p><button class="btn" data-act="a-ttsgen">🎙 Tạo sẵn giọng đọc</button> <button class="btn btn-sm" data-act="a-ttsstop">Dừng</button> <span id="tts-gen" class="small"></span></p></div>');
 
   }
   LN.adminAI = viewAI;
+  var VSAMPLE = 'Hi friends! I\'m Chip. Let\'s learn English together! Look, it\'s a red apple. Great job!';
+  function drawVoicePick() {
+    fetch('api/tts?check=1', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+      var el = document.getElementById('tts-pick'); if (!el) return;
+      var curV = LN.ttsV() || j.def;
+      if (!j.google) el.innerHTML = '<div class="note" style="margin-bottom:8px">Chưa có <code>GOOGLE_TTS_KEY</code> trên Vercel nên chỉ có giọng Gemini (chậm, ít lượt). Thêm khoá Google để có các giọng bé trai bên dưới.</div>';
+      else el.innerHTML = '';
+      el.innerHTML += '<div class="tblw"><table class="tbl"><tbody>' + (j.presets || []).map(function (p) {
+        var on = p.id === curV;
+        return '<tr' + (on ? ' style="background:var(--mint-lt,#E6FAF3)"' : '') + '><td><b>' + esc(p.name) + '</b>' + (on ? ' <span class="pill" style="color:var(--mint-dk)">✓ đang dùng</span>' : '') + '</td><td style="white-space:nowrap"><button class="btn btn-sm" data-act="a-vplay" data-v="' + esc(p.id) + '">▶ Nghe</button> ' + (on ? '' : '<button class="btn btn-sm btn-pink" data-act="a-vuse" data-v="' + esc(p.id) + '">Dùng giọng này</button>') + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+    }, function () { var el = document.getElementById('tts-pick'); if (el) el.textContent = 'Không gọi được máy chủ giọng đọc.'; });
+  }
   function viewAccount(err) {
     var a = cur(), owner = a.role === 'owner', T = teachers();
     var msg = err ? '<div class="' + (err.ok ? 'note note-mint' : 'ferr') + '" style="margin-bottom:14px">' + esc(err.msg) + '</div>' : '';
@@ -877,6 +925,14 @@
       else save(cv.toDataURL('image/png'));
       toast('Đã tải ảnh phiếu báo cáo');
     }
+    else if (a === 'a-imp-rep' || a === 'a-imp-mrg') {
+      if (!LN._impObj) return;
+      var rp = a === 'a-imp-rep';
+      if (rp && !confirm('Thay toàn bộ phần lớp học, điểm danh, học phí, đã đóng trên web bằng đúng như trong file?')) return;
+      var nn = LN.importMerge(LN._impObj, rp); LN._impObj = null;
+      if (LN.cloud && LN.cloud.flush) LN.cloud.flush();
+      toast((rp ? 'Đã làm web giống file' : 'Đã gộp') + ' (' + nn + ' mục) – đang gửi lên mạng'); LN.route();
+    }
     else if (a === 'a-pushprog') { var np = LN._pushAllProg(); toast('Đang gộp ' + np + ' bản tiến độ lên mạng…'); }
     else if (a === 'a-mergeprog') {
       var fu = document.getElementById('rs-from').value, tu = document.getElementById('rs-to').value;
@@ -885,12 +941,58 @@
       var mp = LN.cloud && LN.cloud.mergeProg ? LN.cloud.mergeProg(LN.progOf(tu), LN.progOf(fu)) : LN.progOf(fu);
       mp.updated = Date.now(); LN.saveProgOf(tu, mp); toast('Đã gộp tiến độ vào ' + tu); viewData();
     }
+    else if (a === 'a-vplay') {
+      var vv = t.getAttribute('data-v'); t.textContent = '⏳';
+      var au = new Audio('api/tts?m=w&v=' + vv + '&t=' + encodeURIComponent(VSAMPLE));
+      au.onplaying = function () { t.textContent = '▶ Nghe'; }; au.onerror = function () { t.textContent = '❌ lỗi'; };
+      au.play().catch(function () { t.textContent = '▶ Nghe'; });
+    }
+    else if (a === 'a-vuse') {
+      store.set('ln_ttsv', { id: t.getAttribute('data-v'), at: Date.now() }); LN.ttsCheck && LN.ttsCheck();
+      toast('Đã đổi giọng cho cả trang. Giờ bấm «Tạo sẵn giọng đọc» để các bé nghe ngay.'); drawVoicePick();
+    }
+    else if (a === 'a-ttsstop') { LN._ttsGenStop = true; }
+    else if (a === 'a-ttsgen') {
+      if (LN._ttsGenOn) return; LN._ttsGenOn = true; LN._ttsGenStop = false;
+      var gEl = document.getElementById('tts-gen'), say = function (h) { var e = document.getElementById('tts-gen'); if (e) e.innerHTML = h; };
+      say('⏳ Đang gom danh sách câu…');
+      var miss = [], eng = '', made = 0, bad = 0, all = [];
+      var finish = function (h) { LN._ttsGenOn = false; say(h); };
+      LN.loadAll().then(function () {
+        all = LN.ttsCorpus(); var i = 0;
+        var chk = function () {
+          if (i >= all.length) return Promise.resolve();
+          var part = all.slice(i, i + 200), base = i; i += 200;
+          say('⏳ Đang kiểm tra ' + Math.min(i, all.length) + '/' + all.length + ' câu…');
+          return fetch('api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: part, v: LN.ttsV() }) }).then(function (r) { return r.json(); }).then(function (j) { eng = j.engine || eng; (j.missing || []).forEach(function (k) { miss.push(all[base + k]); }); return chk(); });
+        };
+        return chk();
+      }).then(function () {
+        if (!eng) { finish('❌ Máy chủ chưa có khoá giọng đọc (GOOGLE_TTS_KEY hoặc GEMINI_API_KEY).'); return; }
+        var total = miss.length, k = 0, par = eng === 'g' ? 4 : 1, gap = eng === 'g' ? 0 : 6500;
+        if (!total) { finish('✅ Đã có sẵn giọng cho tất cả ' + all.length + ' câu.'); return; }
+        var one = function () {
+          if (LN._ttsGenStop) return Promise.resolve();
+          if (k >= total) return Promise.resolve();
+          var it = miss[k++];
+          return fetch(LN.ttsUrl(it.t, it.m)).then(function (r) {
+            if (r.ok) { made++; return r.arrayBuffer(); }
+            bad++; if (r.status === 503) { k--; return new Promise(function (ok) { say('⏸ Hết lượt tạm thời, chờ 1 phút rồi chạy tiếp… (' + made + '/' + total + ')'); setTimeout(ok, 65000); }); }
+          }, function () { bad++; }).then(function () {
+            say('⏳ Đã tạo ' + made + '/' + total + ' câu còn thiếu' + (bad ? ' · lỗi ' + bad : '') + ' (tổng ' + all.length + ')');
+            return new Promise(function (ok) { setTimeout(ok, gap); }).then(one);
+          });
+        };
+        var ps = []; for (var q = 0; q < par; q++) ps.push(one());
+        return Promise.all(ps).then(function () { finish(LN._ttsGenStop ? '⏹ Đã dừng ở ' + made + '/' + total + '. Bấm lại để chạy tiếp.' : '✅ Xong! Đã tạo ' + made + ' câu (tổng ' + all.length + ' câu có giọng).'); });
+      }).catch(function (e) { finish('❌ Lỗi: ' + esc(String(e && e.message || e))); });
+    }
     else if (a === 'a-ttstest') {
       var stEl = document.getElementById('tts-st'); stEl.textContent = '⏳ Đang tạo giọng…';
-      var url = 'api/tts?m=w&t=' + encodeURIComponent('Hi friends! Let\'s learn English together. Great job!') + '&_=' + Date.now();
+      var url = LN.ttsUrl('Hi friends! Let\'s learn English together. Great job!', 'w');
       fetch(url).then(function (r) {
-        if (!r.ok) return r.json().catch(function () { return {}; }).then(function (j) { stEl.innerHTML = '<b style="color:var(--red-dk)">❌ Chưa dùng được giọng AI</b> (' + esc(j.error || r.status) + (j.detail ? ': ' + esc(j.detail) : '') + '). ' + (j.error === 'nokey' ? 'Chưa có GEMINI_API_KEY trên Vercel.' : /429|quota/i.test(j.detail || '') ? 'Hết lượt AI miễn phí – thử lại sau.' : /404|400/.test(j.detail || '') ? 'Tài khoản AI Studio chưa có mô hình giọng đọc – xem GEMINI_TTS_MODEL.' : ''); });
-        return r.blob().then(function (b) { var au = new Audio(URL.createObjectURL(b)); au.play(); stEl.innerHTML = '<b style="color:var(--mint-dk)">✅ Giọng AI đang chạy</b>'; });
+        if (!r.ok) return r.json().catch(function () { return {}; }).then(function (j) { stEl.innerHTML = '<b style="color:var(--red-dk)">❌ Chưa dùng được giọng AI</b> (' + esc(j.error || r.status) + (j.detail ? ': ' + esc(j.detail) : '') + '). ' + (r.status === 404 ? 'Trên GitHub còn thiếu tệp api/tts.js – chép thêm tệp này vào thư mục api.' : j.error === 'nokey' ? 'Chưa có GOOGLE_TTS_KEY / GEMINI_API_KEY trên Vercel.' : /google 403|PERMISSION|SERVICE_DISABLED|has not been used/i.test(j.detail || '') ? 'Khoá Google chưa bật «Cloud Text-to-Speech API» (hoặc chưa bật thanh toán) – xem hướng dẫn.' : /429|quota/i.test(j.detail || '') ? 'Hết lượt AI miễn phí – thử lại sau.' : /404|400/.test(j.detail || '') ? 'Tài khoản AI Studio chưa có mô hình giọng đọc – xem GEMINI_TTS_MODEL.' : ''); });
+        return r.blob().then(function (b) { var au = new Audio(URL.createObjectURL(b)); au.play(); stEl.innerHTML = '<b style="color:var(--mint-dk)">✅ Giọng AI đang chạy</b>' + (/mpeg/.test(b.type) ? ' (Google, nhanh)' : ' (Gemini – chậm, ít lượt: nên thêm GOOGLE_TTS_KEY)'); });
       }, function () { stEl.textContent = '❌ Không gọi được máy chủ (mở bằng file hoặc mất mạng).'; });
     }
     else if (a === 'a-export') {
@@ -924,4 +1026,4 @@
   };
 })();
 ;
-(window.LN_V=window.LN_V||{})["admin.js"]="3009e030";
+(window.LN_V=window.LN_V||{})["admin.js"]="5b8d4e4b";

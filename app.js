@@ -342,18 +342,36 @@
   }
   if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
   /* Giọng đọc AI (bạn nam Mỹ vui vẻ) từ máy chủ; lỗi / chậm → giọng có sẵn của máy */
-  var TTS = { down: 0, audio: null };
+  var TTS = { down: 0, audio: null, eng: null, fails: 0, btn: null };
+  /* Hỏi máy chủ một lần: có giọng AI không (g = Google Cloud TTS nhanh, m = Gemini) */
+  LN.ttsCheck = function () {
+    if (location.protocol === 'file:') return Promise.resolve(null);
+    var v = ttsV(); return fetch('api/tts?check=1' + (v ? '&v=' + v : ''), { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) { TTS.eng = j && j.ok ? j.engine : ''; return j; }, function () { return null; });
+  };
+  setTimeout(function () { LN.ttsCheck(); }, 1500);
+  function ttsBusy(on) { if (TTS.btn) TTS.btn.classList.toggle('ld', !!on); if (!on) TTS.btn = null; }
   function serverTTS() { return location.protocol !== 'file:' && LN.cloud && LN.cloud.on && Date.now() > TTS.down && settings().aiVoice !== false; }
-  function ttsUrl(t, m) { return 'api/tts?m=' + m + '&t=' + encodeURIComponent(t); }
+  /* Giọng cô đã chọn cho cả trang (đồng bộ mọi máy qua ln_ttsv) */
+  function ttsV() { var v = store.get('ln_ttsv', null); return v && v.id ? String(v.id).replace(/[^a-z0-9]/g, '') : ''; }
+  LN.ttsV = ttsV;
+  function ttsUrl(t, m) { var v = ttsV(); return 'api/tts?m=' + m + (v ? '&v=' + v : '') + '&t=' + encodeURIComponent(t); }
+  LN.ttsUrl = ttsUrl;
   function stopSpeak() { if (TTS.audio) { try { TTS.audio.pause(); } catch (e) {} TTS.audio = null; } if ('speechSynthesis' in window) speechSynthesis.cancel(); duck(false); }
   LN.stopSpeak = stopSpeak;
   function playTTS(text, mode, onend, onfail) {
     var a = new Audio(ttsUrl(text, mode)), done = false, started = false;
     TTS.audio = a; a.preload = 'auto';
     var r = settings().rate; a.playbackRate = mode === 'p' ? 0.95 : Math.max(0.7, Math.min(1.1, r / 0.85));
-    var to = setTimeout(function () { if (started || done) return; done = true; try { a.pause(); } catch (e) {} onfail(); }, 7000);
-    function fail() { clearTimeout(to); if (done) return; done = true; TTS.down = Date.now() + 120000; onfail(); }
-    a.onplaying = function () { started = true; clearTimeout(to); duck(true); };
+    ttsBusy(true);
+    /* Chờ đủ lâu để giọng AI kịp tạo — không đổi sang giọng của máy chỉ vì hơi chậm (tránh lẫn 2 giọng) */
+    var to = setTimeout(function () { if (started || done) return; done = true; try { a.pause(); } catch (e) {} ttsBusy(false); onfail(); }, TTS.eng === 'g' ? 12000 : 15000);
+    function fail() {
+      clearTimeout(to); if (done) return; done = true; ttsBusy(false);
+      if (TTS.audio !== a) return;   // đã bấm câu khác / dừng
+      if (!a._retry && TTS.eng) { setTimeout(function () { if (TTS.audio !== a) return; var b = playTTS(text, mode, onend, function () { TTS.fails++; if (TTS.fails >= 3) { TTS.down = Date.now() + 45000; TTS.fails = 0; } onfail(); }); b._retry = 1; }, 700); return; }
+      TTS.fails++; if (TTS.fails >= 3) { TTS.down = Date.now() + 45000; TTS.fails = 0; } onfail();
+    }
+    a.onplaying = function () { started = true; clearTimeout(to); TTS.fails = 0; ttsBusy(false); duck(true); };
     a.onended = function () { clearTimeout(to); duck(false); if (TTS.audio === a) TTS.audio = null; if (!done) { done = true; if (onend) onend(); } };
     a.onerror = fail;
     var pr = a.play(); if (pr && pr.catch) pr.catch(function (e) { if (e && e.name === 'NotAllowedError') { clearTimeout(to); if (!done) { done = true; onfail(); } } else fail(); });
@@ -408,6 +426,37 @@
     return out;
   }
   LN.passSentences = passSentences;
+  /* Danh sách mọi câu / từ có thể được đọc — để cô bấm "Tạo sẵn giọng đọc" một lần cho cả trang web */
+  function sayNorm(t) { return String(t).replace(/_+/g, ' ').replace(/…/g, ' ').replace(/\s+\/\s+/g, ', ').replace(/\s+/g, ' ').trim(); }
+  function passNorm(t) { return t.replace(/\(\d+\)\s*/g, '').replace(/_+/g, ', …, ').replace(/…/g, ', ').replace(/\s+/g, ' ').trim(); }
+  LN.ttsCorpus = function () {
+    var out = {}, list = [], R = /^[\x00-\x7F’…]+$/, SKIP = { id: 1, pic: 1, opic: 1, type: 1, gen: 1, topic: 1, icon: 1, title: 1, vi: 1, hint: 1, tip: 1, sub: 1, back: 1, bank: 1, t: 1, color: 1 };
+    function add(t, m) { t = m === 'p' ? passNorm(t) : sayNorm(t); if (!t || t.length > 400 || !/[a-z]/i.test(t)) return; var k = m + '|' + t.toLowerCase(); if (out[k]) return; out[k] = 1; list.push({ t: t, m: m }); }
+    function pass(text) { passSentences(text).forEach(function (p) { add(p.t, 'p'); }); }
+    function walk(x, key, d) {
+      if (x == null || d > 14) return;
+      if (typeof x === 'string') { if (R.test(x) && /[a-z]{2}/i.test(x) && !/^(https?:|data:|#\/|img:|svg:|art:)/.test(x) && !/[<>{}=]/.test(x) && !/^[a-z0-9_-]+$/.test(x) || /^[a-z]{2,}$/i.test(x) && R.test(x)) { add(x, 'w'); if (/_{2,}|^\(\d+\)/.test(x)) add(x.replace(/_{2,}/g, ' … ').replace(/^\(\d+\)\s*/, ''), 'w'); } return; }
+      if (Array.isArray(x)) { x.forEach(function (y) { walk(y, key, d + 1); }); return; }
+      if (typeof x !== 'object') return;
+      if (typeof x.text === 'string' && (x.title != null || key === 'readings')) pass(x.text);
+      if (typeof x.intro === 'string') pass(x.intro);
+      if (x.vocab && x.vocab.length) x.vocab.forEach(function (v) { if (v && v[0]) add(v[0], 'w'); });
+      for (var k in x) if (!SKIP[k] && k !== 'text' && k !== 'intro' && typeof x[k] !== 'function') walk(x[k], k, d + 1);
+    }
+    var keep = CURG;
+    Object.keys(LN.UNITSETS || {}).forEach(function (g) {
+      CURG = +g; (LN.UNITSETS[g] || []).forEach(function (u) {
+        walk(u, '', 0);
+        (u.exercises || []).forEach(function (e) { (e.items || []).forEach(function (it) {
+          try { var q = qSay(it); if (q) add(q, 'w'); if (it.type === 'mcq' || it.o) { (it.o || []).forEach(function (_, k) { var o = optSay(it, k); if (o) add(o, 'w'); }); } var f = fullSentence(it); if (f) add(f, 'w'); } catch (er) {}
+        }); });
+      });
+    });
+    CURG = keep;
+    ['Great job!', 'Awesome!', 'You got it!', 'Super!', 'Well done!', 'Fantastic!', 'Yay! That\'s right!', 'Excellent!', 'Oops! Try again!', 'Almost! You can do it!', 'Nice try!', 'Keep going!'].forEach(function (c) { add(c, 'c'); });
+    add('Hello! Welcome to Aurora English. Let\'s learn together!', 'w');
+    return list;
+  };
   function passageHtml(title, text, idx) {
     var k = 0;
     var body = String(text || '').split(/\n+/).map(function (para) {
@@ -1975,7 +2024,7 @@
     if (ac) { var cu = unitOf(+location.hash.split('/')[2]); if (cu) audCheck(cu, +ac.getAttribute('data-audchk')); return; }
     var t = ev.target.closest('[data-say],[data-act],[data-go],[data-pick],[data-build],[data-unbuild],[data-ml],[data-mr],[data-lpick],[data-mflip],[data-tile],[data-slot],[data-g]');
     if (!t || t.disabled) return;
-    if (t.hasAttribute('data-say')) { speak(t.getAttribute('data-say')); return; }
+    if (t.hasAttribute('data-say')) { speak(t.getAttribute('data-say')); if (TTS.audio) { TTS.btn = t; t.classList.add('ld'); } return; }
     if (t.hasAttribute('data-pass') && S && S._pass) { var pk = +t.getAttribute('data-pass'), pp = S._pass[pk]; if (pp) speakPassage(pp[1], document.getElementById('pass-' + pk)); return; }
     if (t.getAttribute('data-act') === 'pweye') { var pi = document.getElementById(t.getAttribute('data-for')); if (pi) { pi.type = pi.type === 'password' ? 'text' : 'password'; t.classList.toggle('on', pi.type === 'text'); pi.focus(); } return; }
     if (t.getAttribute('data-act') === 'music') { var ms = !settings().music; setSetting('music', ms); if (ms) { ac(); musicStart(); } else musicStop(); toast(ms ? '🎵 Đã bật nhạc nền' : 'Đã tắt nhạc nền'); var bm = document.querySelector('[data-act=music]'); if (bm) { bm.classList.toggle('on', ms); bm.innerHTML = cic(ms ? 'music' : 'musicoff', 24); bm.setAttribute('aria-pressed', ms); } return; }
@@ -2034,4 +2083,4 @@
   LN.boot = function () { route(); };
 })();
 ;
-(window.LN_V=window.LN_V||{})["app.js"]="3e556205";
+(window.LN_V=window.LN_V||{})["app.js"]="779a6ff2";
