@@ -305,10 +305,13 @@
   /* Lời khen / động viên bằng giọng nhân vật (chỉ dùng giọng AI, không dùng giọng máy) */
   var CHEERS = { ok: ['Great job!', 'Awesome!', 'You got it!', 'Super!', 'Well done!', 'Fantastic!', 'Yay! That\'s right!', 'Excellent!'], no: ['Oops! Try again!', 'Almost! You can do it!', 'Nice try!', 'Keep going!'] };
   LN.cheer = function (ok) {
-    if (!serverTTS() || !settings().sound) return;
-    if (TTS.audio && !TTS.audio.paused) return;   // đang đọc câu hỏi thì không chen ngang
-    if (Date.now() - (LN._cheerT || 0) < 3500) return; LN._cheerT = Date.now();
-    var t = pick(CHEERS[ok ? 'ok' : 'no']); playTTS(t, 'c', null, function () {});
+    if (!settings().sound) return;
+    if ((TTS.audio && !TTS.audio.paused) || VP.src) return;   // đang đọc câu hỏi thì không chen ngang
+    if (Date.now() - (LN._cheerT || 0) < 3500) return;
+    var t = pick(CHEERS[ok ? 'ok' : 'no']);
+    if (vpHas(t, 'c')) { LN._cheerT = Date.now(); vpPlay(t, 'c', null, null); return; }
+    if (!serverTTS()) return; LN._cheerT = Date.now();
+    playTTS(t, 'c', null, function () {});
   };
   var burst = LN.burst = function (ok, text) {
     var b = document.createElement('div'); b.className = 'burst ' + (ok ? 'ok' : 'no');
@@ -356,7 +359,64 @@
   LN.ttsV = ttsV;
   function ttsUrl(t, m) { var v = ttsV(); return 'api/tts?m=' + m + (v ? '&v=' + v : '') + '&t=' + encodeURIComponent(t); }
   LN.ttsUrl = ttsUrl;
-  function stopSpeak() { if (TTS.audio) { try { TTS.audio.pause(); } catch (e) {} TTS.audio = null; } if ('speechSynthesis' in window) speechSynthesis.cancel(); duck(false); }
+  /* ===== Giọng đọc tạo sẵn (Fenrir – Kokoro), đóng gói trong thư mục voice/: mọi máy nghe y hệt nhau ===== */
+  var VP = { idx: null, loading: null, packs: {}, cache: {}, nc: 0, ac: null, src: null, tok: 0, unlocked: false };
+  function cyrb53(str) { var h1 = 0xdeadbeef, h2 = 0x41c6ce57; for (var i = 0, ch; i < str.length; i++) { ch = str.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); } h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909); return 4294967296 * (2097151 & h2) + (h1 >>> 0); }
+  function vpKey(m, t) { return cyrb53(m + '|' + String(t).toLowerCase()).toString(16); }
+  LN.vpLoad = function () {
+    if (VP.loading) return VP.loading;
+    if (location.protocol === 'file:' || !window.fetch) return (VP.loading = Promise.resolve(null));
+    VP.loading = fetch('voice/index.json?v=' + (window.LN_VPV || '1')).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      if (!j || !j.packs) return null;
+      var m = {}, n = 0; j.packs.forEach(function (pk, pi) { var off = 0; pk.items.forEach(function (it) { m[it[0]] = [pi, off, it[1]]; off += it[1]; n++; }); });
+      VP.idx = { m: m, files: j.packs.map(function (pk) { return pk.f; }), voice: j.voice || '', n: n }; return VP.idx;
+    }).catch(function () { return null; });
+    return VP.loading;
+  };
+  LN._vp = VP;
+  LN.vpInfo = function () { return VP.idx ? { voice: VP.idx.voice, n: VP.idx.n } : null; };
+  setTimeout(function () { LN.vpLoad(); }, 600);
+  function acx() {
+    if (!VP.ac) { var C = window.AudioContext || window.webkitAudioContext; if (!C) return null; try { VP.ac = new C(); } catch (e) { return null; } }
+    if (VP.ac.state === 'suspended' && VP.ac.resume) { try { VP.ac.resume(); } catch (e) {} }
+    return VP.ac;
+  }
+  function vpUnlock() {   // iPhone / iPad: mở khoá âm thanh ngay lần chạm đầu tiên
+    var ac = acx(); if (!ac || VP.unlocked) return;
+    try { var b = ac.createBuffer(1, 1, 22050), s = ac.createBufferSource(); s.buffer = b; s.connect(ac.destination); s.start(0); VP.unlocked = true; } catch (e) {}
+  }
+  ['pointerdown', 'touchend', 'keydown', 'mousedown'].forEach(function (ev) { document.addEventListener(ev, vpUnlock, true); });
+  function vpHas(t, m) { return VP.idx && VP.idx.m[vpKey(m, t)]; }
+  function vpBytes(e) {
+    var f = 'voice/' + VP.idx.files[e[0]] + '?v=' + (window.LN_VPV || '1');
+    if (VP.packs[f]) return Promise.resolve(VP.packs[f].slice(e[1], e[1] + e[2]));
+    return fetch(f, { headers: { Range: 'bytes=' + e[1] + '-' + (e[1] + e[2] - 1) } }).then(function (r) {
+      if (r.status === 206) return r.arrayBuffer();
+      if (!r.ok) throw new Error('vp ' + r.status);
+      return r.arrayBuffer().then(function (b) { VP.packs[f] = b; return b.slice(e[1], e[1] + e[2]); });
+    });
+  }
+  function vpBuf(e) {
+    var k = e.join(','), ac = acx();
+    if (VP.cache[k]) return Promise.resolve(VP.cache[k]);
+    return vpBytes(e).then(function (b) { return new Promise(function (ok, no) { ac.decodeAudioData(b, ok, no); }); }).then(function (buf) { if (++VP.nc > 400) { VP.cache = {}; VP.nc = 0; } VP.cache[k] = buf; return buf; });
+  }
+  function vpWarm(t, m) { var e = vpHas(t, m); if (e && acx()) vpBuf(e).catch(function () {}); }
+  function vpPlay(t, m, onend, onfail) {
+    var e = vpHas(t, m), ac = e && acx(); if (!e || !ac) return false;
+    var tok = ++VP.tok; ttsBusy(true);
+    vpBuf(e).then(function (buf) {
+      ttsBusy(false); if (tok !== VP.tok) return;
+      var s = ac.createBufferSource(); s.buffer = buf;
+      var r = settings().rate; s.playbackRate.value = m === 'w' ? Math.max(0.8, Math.min(1.15, r / 0.85)) : 1;
+      s.connect(ac.destination);
+      s.onended = function () { if (VP.src === s) { VP.src = null; duck(false); if (onend) onend(); } };
+      VP.src = s; duck(true); s.start(0);
+    }, function () { ttsBusy(false); if (tok === VP.tok && onfail) onfail(); });
+    return true;
+  }
+  function vpStop() { VP.tok++; if (VP.src) { var s = VP.src; VP.src = null; try { s.onended = null; s.stop(0); } catch (e) {} } }
+  function stopSpeak() { vpStop(); if (TTS.audio) { try { TTS.audio.pause(); } catch (e) {} TTS.audio = null; } if ('speechSynthesis' in window) speechSynthesis.cancel(); duck(false); }
   LN.stopSpeak = stopSpeak;
   function playTTS(text, mode, onend, onfail) {
     var a = new Audio(ttsUrl(text, mode)), done = false, started = false;
@@ -390,13 +450,13 @@
     var t = String(text).replace(/_+/g, ' ').replace(/…/g, ' ').replace(/\s+\/\s+/g, ', ').replace(/\s+/g, ' ').trim();
     LN._passTok = (LN._passTok || 0) + 1; stopSpeak();
     if (!t) return;
-    if (serverTTS() && t.length <= 400) playTTS(t, 'w', null, function () { browserSpeak(t, rate); });
-    else browserSpeak(t, rate);
+    var other = function () { if (serverTTS() && t.length <= 400) playTTS(t, 'w', null, function () { browserSpeak(t, rate); }); else browserSpeak(t, rate); };
+    if (!vpPlay(t, 'w', null, other)) { if (VP.idx) (LN._vpMiss = LN._vpMiss || []).push(t); other(); }
   };
   /* Đọc bài đọc: chậm rãi, nhẹ nhàng, nghỉ sau mỗi câu, tô sáng câu đang đọc */
   var speakPassage = LN.speakPassage = function (text, box) {
-    if (!('speechSynthesis' in window)) { toast('Máy này chưa đọc được tiếng Anh. Hãy mở bằng Chrome, Edge hoặc Safari.'); return; }
-    if (!voice) pickVoice();
+    if (!('speechSynthesis' in window) && !VP.idx) { toast('Máy này chưa đọc được tiếng Anh. Hãy mở bằng Chrome, Edge hoặc Safari.'); return; }
+    if (!voice && 'speechSynthesis' in window) pickVoice();
     stopSpeak();
     var tok = LN._passTok = (LN._passTok || 0) + 1, parts = passSentences(text), i = 0;
     function mark(k) { if (!box) return; [].forEach.call(box.querySelectorAll('.ps'), function (el) { el.classList.toggle('on', +el.getAttribute('data-i') === k); }); }
@@ -406,6 +466,8 @@
       var p = parts[i], tx = p.t.replace(/\(\d+\)\s*/g, '').replace(/_+/g, ', …, ').replace(/…/g, ', ').replace(/\s+/g, ' ').trim();
       var after = function () { if (tok !== LN._passTok) return; var gap = p.br ? 900 : /[,;:]$/.test(p.t) ? 350 : 650; i++; setTimeout(next, gap); };
       mark(i);
+      if (parts[i + 1]) vpWarm(passNorm(parts[i + 1].t), 'p');
+      if (vpPlay(tx, 'p', after, function () { browserPass(tx, after); })) return;
       if (parts[i + 1] && serverTTS()) { var pre = new Audio(ttsUrl(parts[i + 1].t.replace(/\(\d+\)\s*/g, '').replace(/_+/g, ', …, ').replace(/…/g, ', ').replace(/\s+/g, ' ').trim(), 'p')); pre.preload = 'auto'; }
       if (serverTTS() && tx.length <= 400) playTTS(tx, 'p', after, function () { browserPass(tx, after); });
       else browserPass(tx, after);
@@ -431,7 +493,7 @@
   function passNorm(t) { return t.replace(/\(\d+\)\s*/g, '').replace(/_+/g, ', …, ').replace(/…/g, ', ').replace(/\s+/g, ' ').trim(); }
   LN.ttsCorpus = function () {
     var out = {}, list = [], R = /^[\x00-\x7F’…]+$/, SKIP = { id: 1, pic: 1, opic: 1, type: 1, gen: 1, topic: 1, icon: 1, title: 1, vi: 1, hint: 1, tip: 1, sub: 1, back: 1, bank: 1, t: 1, color: 1 };
-    function add(t, m) { t = m === 'p' ? passNorm(t) : sayNorm(t); if (!t || t.length > 400 || !/[a-z]/i.test(t)) return; var k = m + '|' + t.toLowerCase(); if (out[k]) return; out[k] = 1; list.push({ t: t, m: m }); }
+    function add(t, m) { t = m === 'p' ? passNorm(t) : sayNorm(t); if (!t || /undefined/.test(t) || t.length > 400 || !/[a-z]/i.test(t)) return; var k = m + '|' + t.toLowerCase(); if (out[k]) return; out[k] = 1; list.push({ t: t, m: m }); }
     function pass(text) { passSentences(text).forEach(function (p) { add(p.t, 'p'); }); }
     function walk(x, key, d) {
       if (x == null || d > 14) return;
@@ -440,6 +502,7 @@
       if (typeof x !== 'object') return;
       if (typeof x.text === 'string' && (x.title != null || key === 'readings')) pass(x.text);
       if (typeof x.intro === 'string') pass(x.intro);
+      if (typeof x.q === 'string' && Array.isArray(x.o) && x.a != null) { try { x = Object.assign({ type: typeof x.a === 'number' ? 'mcq' : 'fill' }, x); var fs = fullSentence(x); if (fs) add(fs, 'w'); var qq = qSay(x); if (qq) add(qq, 'w'); x.o.forEach(function (_, k) { var o = optSay(x, k); if (o) add(o, 'w'); }); } catch (er) {} }
       if (x.vocab && x.vocab.length) x.vocab.forEach(function (v) { if (v && v[0]) add(v[0], 'w'); });
       for (var k in x) if (!SKIP[k] && k !== 'text' && k !== 'intro' && typeof x[k] !== 'function') walk(x[k], k, d + 1);
     }
@@ -447,12 +510,21 @@
     Object.keys(LN.UNITSETS || {}).forEach(function (g) {
       CURG = +g; (LN.UNITSETS[g] || []).forEach(function (u) {
         walk(u, '', 0);
-        (u.exercises || []).forEach(function (e) { (e.items || []).forEach(function (it) {
+        (u.exercises || []).forEach(function (e) { (e.items || []).forEach(function (it) { it = Object.assign({ type: e.type }, it);
           try { var q = qSay(it); if (q) add(q, 'w'); if (it.type === 'mcq' || it.o) { (it.o || []).forEach(function (_, k) { var o = optSay(it, k); if (o) add(o, 'w'); }); } var f = fullSentence(it); if (f) add(f, 'w'); } catch (er) {}
         }); });
       });
     });
     CURG = keep;
+    /* mẫu câu (hỏi + đáp đọc liền), ngữ pháp tổng hợp (dòng ví dụ "> câu || nghĩa") và bài luyện ngữ pháp */
+    Object.keys(LN.UNITSETS || {}).forEach(function (g) { (LN.UNITSETS[g] || []).forEach(function (u) { (u.patterns || []).forEach(function (pt) { (pt.ex || []).forEach(function (e) { if (e && e[0] && e[1]) add(e[0] + ' ' + e[1], 'w'); }); }); }); });
+    [].concat(window.GRAMMAR_DEFAULT || [], (LN.store && store.get('ln_grammar', [])) || []).forEach(function (gm) {
+      String((gm && gm.body) || '').split('\n').forEach(function (ln) { var m = /^\s*>\s*(.+)$/.exec(ln); if (m) add(m[1].split('||')[0].replace(/\*\*/g, '').trim(), 'w'); });
+    });
+    if (window.GRAMMAR_PRACTICE) walk(window.GRAMMAR_PRACTICE, '', 0);
+    if (window.EXPLAIN) walk(window.EXPLAIN, '', 0);
+    if (window.SENT_VI) Object.keys(window.SENT_VI).forEach(function (k) { add(k, 'w'); });
+    if (window.GRADE_CONTENT) walk(window.GRADE_CONTENT, '', 0);
     ['Great job!', 'Awesome!', 'You got it!', 'Super!', 'Well done!', 'Fantastic!', 'Yay! That\'s right!', 'Excellent!', 'Oops! Try again!', 'Almost! You can do it!', 'Nice try!', 'Keep going!'].forEach(function (c) { add(c, 'c'); });
     add('Hello! Welcome to Aurora English. Let\'s learn together!', 'w');
     return list;
@@ -2083,4 +2155,4 @@
   LN.boot = function () { route(); };
 })();
 ;
-(window.LN_V=window.LN_V||{})["app.js"]="779a6ff2";
+(window.LN_V=window.LN_V||{})["app.js"]="d2b65485";
