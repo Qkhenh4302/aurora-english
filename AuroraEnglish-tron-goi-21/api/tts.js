@@ -34,14 +34,15 @@ const PRESETS = {
   fenrir:{ v: 'en-US-Chirp3-HD-Fenrir', rate: { w: 0.92, p: 0.84, c: 1.04 }, name: 'Anh trai hào hứng' },
   gem:   { gem: 1, name: '★ Gemini – diễn y kiểu nhân vật trong video mẫu (biểu cảm nhất, nhưng chậm, ít lượt)' }
 };
-const DEF = process.env.TTS_PRESET && PRESETS[process.env.TTS_PRESET] ? process.env.TTS_PRESET : 'am1';
-function presetOf(v) { const p = PRESETS[v] ? v : DEF; return (PRESETS[p].gem || !GKEY) ? (KEY ? 'gem' : '') : p; }
+const DEF = process.env.TTS_PRESET && PRESETS[process.env.TTS_PRESET] ? process.env.TTS_PRESET : 'gem';
+function presetOf(v) { const p = PRESETS[v] ? v : DEF; return (PRESETS[p].gem || !GKEY) ? ((KEY || GKEY) ? 'gem' : '') : p; }
 const ENGINE = GKEY ? 'g' : KEY ? 'm' : '';
 async function ggen(text, mode, pre) {
   const P = PRESETS[pre], url = 'https://texttospeech.googleapis.com/v1/text:synthesize?key=' + encodeURIComponent(GKEY);
   const body = (full) => JSON.stringify({ input: { text }, voice: { languageCode: P.v.slice(0, 5), name: P.v }, audioConfig: Object.assign({ audioEncoding: 'MP3', sampleRateHertz: 24000 }, full ? { speakingRate: P.rate[mode] } : {}, full && P.pitch ? { pitch: P.pitch } : {}) });
   let r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body(1) });
   if (r.status === 400) r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body(0) });
+  for (let k = 0; k < 2 && (r.status === 429 || r.status >= 500); k++) { await new Promise((ok) => setTimeout(ok, 900 * (k + 1))); r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body(1) }); }
   if (!r.ok) { const e = new Error('google ' + r.status + ' ' + (await r.text()).slice(0, 160)); e.status = r.status; throw e; }
   const j = await r.json(); if (!j.audioContent) throw new Error('google noaudio');
   return Buffer.from(j.audioContent, 'base64');
@@ -65,6 +66,22 @@ function wav(pcm, rate) {
   h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22); h.writeUInt32LE(rate, 24); h.writeUInt32LE(rate * 2, 28);
   h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34); h.write('data', 36); h.writeUInt32LE(pcm.length, 40);
   return Buffer.concat([h, pcm]);
+}
+/* Giọng Gemini chạy qua Google Cloud Text-to-Speech (cùng giọng + lời mô tả, nhưng dùng khoá GOOGLE_TTS_KEY: nhiều lượt hơn hẳn) */
+let CGBAD = 0;
+async function cgem(text, mode) {
+  const url = 'https://texttospeech.googleapis.com/v1/text:synthesize?key=' + encodeURIComponent(GKEY);
+  const prompt = STYLE[mode].replace(/\s*(Say|Read) exactly this:\s*$/, '');
+  const body = JSON.stringify({ input: { prompt, text }, voice: { languageCode: 'en-US', name: VOICE, modelName: process.env.GEMINI_CLOUD_MODEL || 'gemini-2.5-flash-tts' }, audioConfig: { audioEncoding: 'MP3', sampleRateHertz: 24000 } });
+  let r;
+  for (let k = 0; k < 3; k++) {
+    r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    if (r.ok || (r.status !== 429 && r.status < 500)) break;
+    await new Promise((ok) => setTimeout(ok, 800 * (k + 1)));
+  }
+  if (!r.ok) { const e = new Error('cloud-gemini ' + r.status + ' ' + (await r.text()).slice(0, 160)); e.status = r.status; throw e; }
+  const j = await r.json(); if (!j.audioContent) throw new Error('cloud-gemini noaudio');
+  return Buffer.from(j.audioContent, 'base64');
 }
 async function gen(text, mode) {
   let last = null;
@@ -92,11 +109,11 @@ module.exports = async (req, res) => {
     const ids = pre ? items.map((x) => idOf(String(x.t || '').slice(0, 400), x.m === 'p' ? 'p' : x.m === 'c' ? 'c' : 'w', pre)) : [];
     const got = ids.length ? await redis([['MGET'].concat(ids.map((i) => 'ae:tts:' + i))]).then((r) => r[0] || []) : [];
     res.setHeader('Cache-Control', 'no-store');
-    res.status(200).json({ missing: items.map((_, k) => k).filter((k) => !got[k]), engine: pre === 'gem' ? 'm' : pre ? 'g' : '', preset: pre });
+    res.status(200).json({ missing: items.map((_, k) => k).filter((k) => !got[k]), engine: pre === 'gem' ? (GKEY ? 'g' : 'm') : pre ? 'g' : '', preset: pre });
     return;
   }
   const text = String(q.t || '').replace(/\s+/g, ' ').trim().slice(0, 400), mode = q.m === 'p' ? 'p' : q.m === 'c' ? 'c' : 'w';
-  if (q.check) { res.setHeader('Cache-Control', 'no-store'); const pre = presetOf(q.v); res.status(200).json({ ok: !!pre, engine: pre === 'gem' ? 'm' : pre ? 'g' : '', preset: pre, def: DEF, google: !!GKEY, presets: Object.keys(PRESETS).filter((k) => GKEY || PRESETS[k].gem).map((k) => ({ id: k, name: PRESETS[k].name })), paused: Date.now() < BAD }); return; }
+  if (q.check) { res.setHeader('Cache-Control', 'no-store'); const pre = presetOf(q.v); res.status(200).json({ ok: !!pre, engine: pre === 'gem' ? (GKEY ? 'g' : 'm') : pre ? 'g' : '', preset: pre, def: DEF, google: !!GKEY, presets: Object.keys(PRESETS).filter((k) => GKEY || PRESETS[k].gem).map((k) => ({ id: k, name: PRESETS[k].name })), paused: Date.now() < BAD }); return; }
   if (!text) { res.status(400).json({ error: 'text' }); return; }
   if (!ENGINE) { res.setHeader('Cache-Control', 'no-store'); res.status(503).json({ error: 'nokey' }); return; }
   const pre = presetOf(q.v);
@@ -110,9 +127,16 @@ module.exports = async (req, res) => {
         buf = await ggen(text, mode, pre); type = 'audio/mpeg';
         if (buf.length < 700000) await redis([['SET', rk, 'mp3:' + buf.toString('base64')]]);
       } else {
-        if (Date.now() < BAD) { res.setHeader('Cache-Control', 'no-store'); res.status(503).json({ error: 'busy' }); return; }
-        buf = await gen(text, mode);
-        if (buf.length < 700000) await redis([['SET', rk, buf.toString('base64')]]);
+        let done = false;
+        if (GKEY && Date.now() > CGBAD) {
+          try { buf = await cgem(text, mode); type = 'audio/mpeg'; done = true; if (buf.length < 700000) await redis([['SET', rk, 'mp3:' + buf.toString('base64')]]); }
+          catch (e) { if (!KEY) throw e; if (e.status === 403 || e.status === 400 || e.status === 404) CGBAD = Date.now() + 600000; }
+        }
+        if (!done) {
+          if (Date.now() < BAD) { res.setHeader('Cache-Control', 'no-store'); res.status(503).json({ error: 'busy' }); return; }
+          buf = await gen(text, mode);
+          if (buf.length < 700000) await redis([['SET', rk, buf.toString('base64')]]);
+        }
       }
     }
     res.setHeader('Content-Type', type);
