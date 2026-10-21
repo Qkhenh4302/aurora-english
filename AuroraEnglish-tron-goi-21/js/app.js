@@ -2209,7 +2209,7 @@
     if (ao) { var bx = ao.closest('.aud-q'); bx.querySelectorAll('.aud-o').forEach(function (b) { b.classList.remove('sel', 'right', 'wrong'); }); ao.classList.add('sel'); var lab = ao.textContent; if (/^[\x00-\x7F’]+$/.test(lab) && /[a-z]/i.test(lab)) speak(lab); return; }
     var ac = ev.target.closest('[data-audchk]');
     if (ac) { var cu = unitOf(+location.hash.split('/')[2]); if (cu) audCheck(cu, +ac.getAttribute('data-audchk')); return; }
-    var t = ev.target.closest('[data-say],[data-act],[data-go],[data-pick],[data-build],[data-unbuild],[data-ml],[data-mr],[data-lpick],[data-mflip],[data-tile],[data-slot],[data-g]');
+    var t = ev.target.closest('[data-say],[data-pass],[data-act],[data-go],[data-pick],[data-build],[data-unbuild],[data-ml],[data-mr],[data-lpick],[data-mflip],[data-tile],[data-slot],[data-g]');
     if (!t || t.disabled) return;
     if (t.hasAttribute('data-say')) { speak(t.getAttribute('data-say')); if (TTS.audio) { TTS.btn = t; t.classList.add('ld'); } return; }
     if (t.hasAttribute('data-pass') && S && S._pass) { var pk = +t.getAttribute('data-pass'), pp = S._pass[pk]; if (pp) speakPassage(pp[1], document.getElementById('pass-' + pk)); return; }
@@ -2270,4 +2270,4 @@
   LN.boot = function () { route(); };
 })();
 ;
-(window.LN_V=window.LN_V||{})["app.js"]="69e98058";
+(window.LN_V=window.LN_V||{})["app.js"]="48854422";
