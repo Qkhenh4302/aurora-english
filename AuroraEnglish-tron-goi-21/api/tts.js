@@ -147,11 +147,42 @@ async function batchHandler(b, res) {
   }
 }
 
+/* ===== Đưa gói giọng lên app: ghi thẳng vào GitHub (một lần commit), Vercel tự cập nhật =====
+   Cần trên Vercel: GITHUB_TOKEN (fine-grained, quyền Contents: Read and write cho repo của app)
+   Tuỳ chọn: GITHUB_REPO (mặc định Qkhenh4302/aurora-english), GITHUB_DIR (AuroraEnglish-tron-goi-21), GITHUB_BRANCH (main) */
+const GH = { tok: process.env.GITHUB_TOKEN || '', repo: process.env.GITHUB_REPO || 'Qkhenh4302/aurora-english', dir: (process.env.GITHUB_DIR || 'AuroraEnglish-tron-goi-21').replace(/^\/+|\/+$/g, ''), br: process.env.GITHUB_BRANCH || 'main' };
+async function gh(method, path, body) {
+  const r = await fetch((process.env.GITHUB_API || 'https://api.github.com') + '/repos/' + GH.repo + path, { method, headers: { Authorization: 'Bearer ' + GH.tok, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json', 'User-Agent': 'aurora-english' }, body: body ? JSON.stringify(body) : undefined });
+  const t = await r.text(); let j = null; try { j = JSON.parse(t); } catch (e) {}
+  if (!r.ok) { const e = new Error('github ' + r.status + ' ' + (j && j.message || t).slice(0, 200)); e.status = r.status; throw e; }
+  return j;
+}
+async function ghHandler(b, res) {
+  res.setHeader('Cache-Control', 'no-store');
+  if (!(await isAdmin(b.token))) { res.status(401).json({ error: 'login' }); return; }
+  if (b.action === 'ghcheck') { if (!GH.tok) { res.status(200).json({ ok: false, why: 'notoken', repo: GH.repo }); return; } try { await gh('GET', '/branches/' + GH.br); res.status(200).json({ ok: true, repo: GH.repo, dir: GH.dir }); } catch (e) { res.status(200).json({ ok: false, why: String(e.message).slice(0, 200), repo: GH.repo }); } return; }
+  if (!GH.tok) { res.status(400).json({ error: 'notoken' }); return; }
+  try {
+    if (b.action === 'ghblob') { const j = await gh('POST', '/git/blobs', { content: String(b.data || ''), encoding: 'base64' }); res.status(200).json({ sha: j.sha }); return; }
+    if (b.action === 'ghcommit') {
+      const files = (Array.isArray(b.files) ? b.files : []).filter((f) => f && /^voice\/[a-z0-9_.-]{1,40}$/i.test(f.path) && /^[a-f0-9]{40}$/.test(f.sha));
+      if (!files.length) { res.status(400).json({ error: 'files' }); return; }
+      const ref = await gh('GET', '/git/ref/heads/' + GH.br), base = await gh('GET', '/git/commits/' + ref.object.sha);
+      const tree = await gh('POST', '/git/trees', { base_tree: base.tree.sha, tree: files.map((f) => ({ path: (GH.dir ? GH.dir + '/' : '') + f.path, mode: '100644', type: 'blob', sha: f.sha })) });
+      const c = await gh('POST', '/git/commits', { message: String(b.message || 'Cập nhật giọng đọc').slice(0, 200), tree: tree.sha, parents: [ref.object.sha] });
+      await gh('PATCH', '/git/refs/heads/' + GH.br, { sha: c.sha });
+      res.status(200).json({ ok: true, commit: c.sha }); return;
+    }
+    res.status(400).json({ error: 'action' });
+  } catch (e) { res.status(e.status === 401 || e.status === 403 ? 403 : 502).json({ error: 'github', detail: String(e.message).slice(0, 300) }); }
+}
+
 module.exports = async (req, res) => {
   const q = req.query || {};
   if (req.method === 'POST') {
     const b0 = await readBody(req);
     if (b0 && b0.action === 'batch') { await batchHandler(b0, res); return; }
+    if (b0 && /^gh/.test(b0.action || '')) { await ghHandler(b0, res); return; }
     if (b0 && b0.action === 'key') {   // chỉ cô / quản trị đã đăng nhập: lấy khoá để máy của cô gọi Gemini trực tiếp (lượt dài, ít tốn lượt/ngày)
       res.setHeader('Cache-Control', 'no-store');
       if (!KEY) { res.status(503).json({ error: 'nokey' }); return; }

@@ -7,6 +7,7 @@
   'use strict';
   var LN = window.LN, store = LN.store;
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  var VOICE = 'Puck';
   var VOICES = [['Puck', 'Puck – nam trẻ, vui (đã nghe mẫu)'], ['Leda', 'Leda – nữ trẻ, trong trẻo'], ['Kore', 'Kore – nữ, rõ ràng'], ['Aoede', 'Aoede – nữ, nhẹ nhàng'], ['Zephyr', 'Zephyr – nữ, tươi sáng'], ['Fenrir', 'Fenrir – nam, hào hứng'], ['Charon', 'Charon – nam, ấm'], ['Orus', 'Orus – nam, chắc giọng']];
   var MODELS = ['gemini-2.5-flash-preview-tts', 'gemini-3.8-flash-tts', 'gemini-2.5-flash-tts', 'gemini-3.8-flash-lite-tts'];
   var BATCH = 40, MAXCH = 1400, PAR = 2, KBPS = 32;
@@ -32,7 +33,7 @@
     });
     return DBP;
   }
-  function tx(st, mode, fn) { return db().then(function (d) { return new Promise(function (ok, no) { var t = d.transaction(st, mode), s = t.objectStore(st), out = fn(s); t.oncomplete = function () { ok(out && out.result !== undefined ? out.result : out); }; t.onerror = function () { no(t.error); }; }); }); }
+  function tx(st, mode, fn) { return db().then(function (d) { return new Promise(function (ok, no) { var t = d.transaction(st, mode), s = t.objectStore(st), out = fn(s); t.oncomplete = function () { ok(out && typeof IDBRequest !== 'undefined' && out instanceof IDBRequest ? out.result : out); }; t.onerror = function () { no(t.error); }; }); }); }
   function put(st, k, v) { return tx(st, 'readwrite', function (s) { s.put(v, k); }); }
   function get(st, k) { return tx(st, 'readonly', function (s) { return s.get(k); }); }
   function keys(st) { return tx(st, 'readonly', function (s) { return s.getAllKeys(); }); }
@@ -106,12 +107,13 @@
 
   /* ---------- gọi máy chủ ---------- */
   function today() { return new Date().toISOString().slice(0, 10); }
+  function reqToday(add) { var o = {}; try { o = JSON.parse(localStorage.getItem('ln_gem_req') || '{}'); } catch (e) {} if (o.d !== today()) o = { d: today(), n: 0 }; if (add) { o.n += add; try { localStorage.setItem('ln_gem_req', JSON.stringify(o)); } catch (e) {} } return o.n; }
   function exhausted() { var e = store.get('ln_note_gemq', null) || {}; return e.d === today() ? e.m || {} : {}; }
   function markExhausted(m) { var e = { d: today(), m: exhausted() }; e.m[m] = 1; store.set('ln_note_gemq', e); }
   function pickModel() { var ex = exhausted(), bad = G.badModel || {}; for (var i = 0; i < MODELS.length; i++) if (!ex[MODELS[i]] && !bad[MODELS[i]]) return MODELS[i]; return null; }
   function callBatch(items, voice) {
     var model = pickModel(); if (!model) return Promise.reject({ stop: 'Hôm nay đã dùng hết lượt của Gemini. Ngày mai mở trang này và bấm «Tiếp tục».' });
-    G.model = model; G.req++;
+    G.model = model; G.req++; reqToday(1);
     var lines = items.map(function (x) { return x.t; }), mode = items[0].m;
     var prompt = BSTYLE[mode] + '\n\nRead the ' + lines.length + ' lines below for an English lesson. Read every line exactly as written, in order, exactly once. Do not read line numbers, do not add or skip any words. ' +
       'After EACH line stay completely silent for two full seconds before starting the next line. Inside a line, " — " means a second person answers: make a short natural pause (about half a second) there.\n\n' + lines.join('\n');
@@ -155,13 +157,10 @@
   /* ---------- chạy ---------- */
   function start() {
     if (G.run) return;
-    var voice = document.getElementById('gm-voice').value;
-    G.run = true; G.stop = false; G.msg = 'Đang chuẩn bị…'; draw();
+    var voice = VOICE;
+    G.run = true; G.stop = false; G.pub = ''; G.msg = 'Đang chuẩn bị…'; draw();
     libs().then(function () { return get('meta', 'voice'); }).then(function (v) {
-      if (v && v !== voice) {
-        if (!confirm('Máy này đang tạo dở giọng ' + v + '. Đổi sang ' + voice + ' sẽ xoá phần đã tạo và làm lại từ đầu. Đồng ý?')) { voice = v; document.getElementById('gm-voice').value = v; return; }
-        return clear('clips');
-      }
+      if (v && v !== voice) return clear('clips').then(function () { return put('meta', 'published', null); });
     }).then(function () { return put('meta', 'voice', voice); }).then(corpus).then(function (list) {
       G.list = list; G.total = list.length; return keys('clips');
     }).then(function (have) {
@@ -169,7 +168,7 @@
       var todo = G.list.filter(function (x) { return !hv[x.k] && !G.failed[x.k]; });
       var queue = [];
       ['c', 'p', 'w'].forEach(function (m) { var arr = todo.filter(function (x) { return x.m === m; }); for (var i = 0; i < arr.length;) { var b = [], chars = 0; while (i < arr.length && b.length < BATCH && (!b.length || chars + arr[i].t.length < MAXCH)) { chars += arr[i].t.length; b.push(arr[i++]); } queue.push(b); } });
-      G.msg = queue.length ? 'Đang tạo giọng ' + voice + '…' : 'Đã tạo xong tất cả câu.'; draw();
+      G.msg = queue.length ? '🎙 Đang thu giọng ' + voice + '… (để trang mở, không cho máy ngủ)' : 'Đã thu xong tất cả câu.'; draw();
       var worker = function () {
         if (G.stop || !queue.length) return Promise.resolve();
         var b = queue.shift();
@@ -182,10 +181,10 @@
       return Promise.all(ws);
     }).then(function () {
       G.run = false;
-      if (!G.stop && G.done >= G.total - Object.keys(G.failed).length) G.msg = '✅ Đã tạo xong ' + G.done + ' câu' + (Object.keys(G.failed).length ? ' (' + Object.keys(G.failed).length + ' câu lỗi, bấm Tiếp tục để thử lại)' : '') + '. Bấm «Tải gói giọng» để lấy file đưa lên GitHub.';
+      if (!G.stop && G.done >= G.total - Object.keys(G.failed).length) G.msg = '✅ Đã thu xong ' + G.done + ' câu' + (Object.keys(G.failed).length ? ' (' + Object.keys(G.failed).length + ' câu lỗi, bấm Tiếp tục để thử lại)' : '') + '.';
       G.failed = G.stop ? G.failed : {};
-      draw();
-    }, function (e) { G.run = false; G.msg = 'Lỗi: ' + (e && (e.stop || e.message) || e); draw(); });
+      draw(); autoPublish();
+    }, function (e) { G.run = false; G.msg = 'Lỗi: ' + (e && (e.stop || e.message) || e); draw(); autoPublish(); });
   }
 
   /* ---------- nghe thử ---------- */
@@ -195,7 +194,7 @@
     list.forEach(function (pcm) { var b = ac.createBuffer(1, pcm.length, rate), d = b.getChannelData(0); for (var i = 0; i < pcm.length; i++) d[i] = pcm[i] / 32768; var s = ac.createBufferSource(); s.buffer = b; s.connect(ac.destination); s.start(t); t += b.duration + 0.7; });
   }
   function sample() {
-    var voice = document.getElementById('gm-voice').value, items = SAMPLE.map(function (t) { return { t: t, m: 'w' }; });
+    var voice = VOICE, items = SAMPLE.map(function (t) { return { t: t, m: 'w' }; });
     G.msg = '⏳ Đang tạo câu mẫu giọng ' + voice + '…'; draw();
     callBatch(items, voice).then(function (w) {
       var segs = split(w.pcm, w.rate, SAMPLE);
@@ -244,35 +243,93 @@
     }).catch(function (e) { G.msg = 'Lỗi đóng gói: ' + (e.message || e); draw(); });
   }
 
-  /* ---------- giao diện ---------- */
+  /* ---------- đưa lên app (GitHub) ---------- */
+  var GHS = { ok: null, why: '' };
+  function ghPost(body) { body.token = token(); return fetch('api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.detail || j.error || ('HTTP ' + r.status)); return j; }); }); }
+  function ghCheck() { return ghPost({ action: 'ghcheck' }).then(function (j) { GHS.ok = !!j.ok; GHS.why = j.why || ''; draw(); return GHS.ok; }, function (e) { GHS.ok = false; GHS.why = e.message; draw(); return false; }); }
+  function toB64(u8) { return new Promise(function (ok) { var fr = new FileReader(); fr.onload = function () { ok(String(fr.result).split(',')[1]); }; fr.readAsDataURL(new Blob([u8])); }); }
+  function utf8b64(s) { return toB64(new TextEncoder().encode(s)); }
+  var PUB = false;
+  function autoPublish() { var on = true; try { on = localStorage.getItem('ln_gem_auto') !== '0'; } catch (e) {} if (on && GHS.ok) publish(); }
+  function publish() {
+    if (PUB || G.run) { if (G.run) { G.msg = 'Đang thu giọng – bấm Dừng trước, hoặc đợi tự đưa lên khi dừng.'; draw(); } return; }
+    PUB = true; G.pub = '⏳ Đang chuẩn bị đưa lên app…'; draw();
+    var list, pubd, base, newPacks = [], files = [];
+    corpus().then(function (l) { list = l; return get('meta', 'published'); }).then(function (p) {
+      pubd = p || { packs: [] };
+      return get('meta', 'baseIndex').then(function (b) {
+        if (b) return b;
+        return fetch('voice/index.json?v=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) { j = j && !/^Gemini/.test(j.voice || '') ? j : null; if (j) return put('meta', 'baseIndex', j).then(function () { return j; }); return null; });
+      });
+    }).then(function (b) {
+      base = b;
+      var done = {}; pubd.packs.forEach(function (pk) { pk.items.forEach(function (it) { done[it[0]] = 1; }); });
+      var cur = null, num = pubd.packs.length;
+      return list.reduce(function (pr, x) {
+        return pr.then(function () { if (done[x.k]) return; return get('clips', x.k).then(function (u8) {
+          if (!u8) return;
+          if (!cur || cur.size + u8.length > 1500000) { cur = { f: 'g' + ('00' + (num + newPacks.length)).slice(-3) + '.bin', parts: [], items: [], size: 0 }; newPacks.push(cur); }
+          cur.parts.push(u8); cur.items.push([x.k, u8.length]); cur.size += u8.length;
+        }); });
+      }, Promise.resolve());
+    }).then(function () {
+      if (!newPacks.length) { G.pub = 'Không có câu mới cần đưa lên.'; return null; }
+      return newPacks.reduce(function (pr, pk, i) {
+        return pr.then(function () { G.pub = '⬆ Đang gửi gói ' + (i + 1) + '/' + newPacks.length + '…'; draw(); var all = new Uint8Array(pk.size), o = 0; pk.parts.forEach(function (u) { all.set(u, o); o += u.length; }); return toB64(all); }).then(function (b64) { return ghPost({ action: 'ghblob', data: b64 }); }).then(function (j) { files.push({ path: 'voice/' + pk.f, sha: j.sha }); });
+      }, Promise.resolve()).then(function () {
+        var gpacks = pubd.packs.concat(newPacks.map(function (pk) { return { f: pk.f, items: pk.items }; }));
+        var have = {}; gpacks.forEach(function (pk) { pk.items.forEach(function (it) { have[it[0]] = 1; }); });
+        var packs = gpacks.map(function (pk) { return { f: pk.f, items: pk.items }; });
+        if (base && base.packs) base.packs.forEach(function (pk) {   // câu chưa thu giọng Puck: tạm dùng giọng cũ
+          var off = 0, keep = []; pk.items.forEach(function (it) { if (!have[it[0]]) keep.push([it[0], it[1], off]); off += it[1]; });
+          if (keep.length) packs.push({ f: pk.f, items: keep });
+        });
+        var n = gpacks.reduce(function (s, pk) { return s + pk.items.length; }, 0);
+        return utf8b64(JSON.stringify({ voice: 'Gemini ' + VOICE, gemini: n, packs: packs })).then(function (b64) { G.pub = '⬆ Đang gửi danh mục giọng…'; draw(); return ghPost({ action: 'ghblob', data: b64 }); }).then(function (j) {
+          files.push({ path: 'voice/index.json', sha: j.sha });
+          return ghPost({ action: 'ghcommit', files: files, message: 'Giọng Puck: ' + n + ' câu' });
+        }).then(function () { return put('meta', 'published', { packs: gpacks, at: Date.now() }); }).then(function () { G.pub = '✅ Đã đưa lên app ' + n + ' câu giọng Puck. Khoảng 1–2 phút nữa Vercel cập nhật xong, các bé tải lại trang là nghe giọng mới.'; G.pubN = n; });
+      });
+    }).catch(function (e) { G.pub = '❌ Chưa đưa lên được: ' + (e.message || e); }).then(function () { PUB = false; draw(); });
+  }
+
+  /* ---------- giao diện (gọn) ---------- */
   function draw() {
     var el = document.getElementById('gm-st'); if (!el) return;
-    var pct = G.total ? Math.floor(G.done * 100 / G.total) : 0;
-    el.innerHTML = (G.total ? '<div class="tk-bar" style="height:10px;margin:6px 0"><i style="width:' + pct + '%"></i></div><b>' + G.done + ' / ' + G.total + ' câu (' + pct + '%)</b> · lượt gọi Gemini: ' + G.req + (G.model ? ' · mẫu: ' + esc(G.model) : '') + (G.err ? ' · lỗi tạm: ' + G.err : '') + '<br>' : '') + esc(G.msg);
-    var b1 = document.getElementById('gm-start'); if (b1) b1.disabled = G.run;
+    var pct = G.total ? Math.floor(G.done * 100 / G.total) : 0, used = reqToday(0);
+    el.innerHTML = (G.total ? '<div class="tk-bar" style="height:12px;margin:8px 0"><i style="width:' + pct + '%"></i></div><b style="font-size:16px">Đã thu ' + G.done + ' / ' + G.total + ' câu (' + pct + '%)</b>' : '<b>Đã thu ' + G.done + ' câu</b>') +
+      ' · hôm nay đã dùng <b>' + used + '</b>/100 lượt Gemini' + (G.err ? ' · thử lại: ' + G.err : '') +
+      '<div style="margin-top:6px">' + esc(G.msg) + '</div>' + (G.pub ? '<div style="margin-top:6px">' + esc(G.pub) + '</div>' : '');
+    var b1 = document.getElementById('gm-start'); if (b1) { b1.disabled = G.run; b1.textContent = G.run ? '🎙 Đang thu…' : (G.done ? '🎙 Thu tiếp giọng Puck' : '🎙 Bắt đầu thu giọng Puck'); }
+    var gb = document.getElementById('gm-gh');
+    if (gb) gb.innerHTML = GHS.ok === null ? '' : GHS.ok ? '✅ Đã nối với GitHub: giọng mới tự đưa lên app.' :
+      '<div class="note" style="margin-top:8px"><b>Chưa nối được GitHub</b> nên chưa tự đưa giọng lên app' + (GHS.why && GHS.why !== 'notoken' ? ' (' + esc(GHS.why) + ')' : '') + '. Làm 1 lần: tạo khoá GitHub rồi thêm vào Vercel tên <code>GITHUB_TOKEN</code> (xem hướng dẫn em gửi). Trong lúc chờ có thể bấm «Tải file zip» để tự đưa lên.</div>';
   }
   LN.gemCard = function () {
-    return '<div class="card" style="margin-top:16px"><h2>🎙 Tạo giọng Gemini cho cả app</h2>' +
-      '<p class="small muted">Chạy trên máy này. Mỗi lượt Gemini đọc tới ' + BATCH + ' câu, máy tự cắt và kiểm tra từng câu. Tắt máy hoặc hết lượt trong ngày thì lần sau bấm <b>Tiếp tục</b>. Nên dùng Chrome hoặc Edge, để trang mở và không cho máy ngủ.</p>' +
-      '<div class="two" style="align-items:end;margin:8px 0"><div class="field"><label for="gm-voice">Giọng</label><select class="sel" id="gm-voice">' + VOICES.map(function (v) { return '<option value="' + v[0] + '">' + esc(v[1]) + '</option>'; }).join('') + '</select></div>' +
-      '<div><button class="btn" data-act="gm-sample">▶ Nghe thử 6 câu</button></div></div>' +
-      '<p style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-pink" id="gm-start" data-act="gm-start">🎙 Bắt đầu / Tiếp tục</button><button class="btn" data-act="gm-stop">⏸ Dừng</button><button class="btn" data-act="gm-listen">🔊 Nghe 5 câu đã tạo</button><button class="btn btn-mint" data-act="gm-export">⬇ Tải gói giọng</button></p>' +
-      '<div id="gm-st" class="small"></div></div>';
+    var auto = true; try { auto = localStorage.getItem('ln_gem_auto') !== '0'; } catch (e) {}
+    return '<div class="card" style="margin-bottom:16px;border:2px solid var(--pink,#FF5C9A)"><h2>🔊 Giọng đọc của app: Puck (Gemini)</h2>' +
+      '<p class="small muted" style="margin:4px 0 10px">Bấm <b>Thu giọng</b> rồi để trang mở (không tắt máy, không cho máy ngủ). Mỗi ngày Gemini cho 100 lượt; hết lượt máy tự dừng và tự đưa phần đã thu lên app. Hôm sau mở trang này bấm <b>Thu tiếp</b>. Câu nào chưa thu xong, app tạm đọc bằng giọng cũ.</p>' +
+      '<p style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><button class="btn btn-lg btn-pink" id="gm-start" data-act="gm-start">🎙 Thu giọng Puck</button><button class="btn" data-act="gm-stop">⏸ Dừng</button><button class="btn btn-mint" data-act="gm-pub">⬆ Đưa lên app ngay</button>' +
+      '<label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="gm-auto"' + (auto ? ' checked' : '') + '> Tự đưa lên app khi dừng</label></p>' +
+      '<div id="gm-st" class="small"></div><div id="gm-gh" class="small"></div>' +
+      '<p class="small" style="margin-top:10px"><a href="#" data-act="gm-sample">▶ Nghe thử 6 câu</a> · <a href="#" data-act="gm-listen">🔊 Nghe 5 câu vừa thu</a> · <a href="#" data-act="gm-export">⬇ Tải file zip (dự phòng)</a></p></div>';
   };
   LN.gemInit = function () {
-    get('meta', 'voice').then(function (v) { var s = document.getElementById('gm-voice'); if (s && v) s.value = v; }).catch(function () {});
-    if (!G.total) keys('clips').then(function (ks) { if (ks.length) { G.done = ks.length; G.msg = 'Máy này đã tạo ' + ks.length + ' câu. Bấm «Bắt đầu / Tiếp tục» để làm tiếp.'; draw(); } }).catch(function () {});
-    draw();
+    var cb = document.getElementById('gm-auto'); if (cb) cb.addEventListener('change', function () { try { localStorage.setItem('ln_gem_auto', cb.checked ? '1' : '0'); } catch (e) {} });
+    if (!G.total) Promise.all([keys('clips'), corpus()]).then(function (r) { G.done = r[0].length; G.total = r[1].length; G.list = r[1]; if (!G.msg) G.msg = G.done ? 'Bấm «Thu tiếp giọng Puck» để làm tiếp.' : 'Chưa thu câu nào. Bấm «Bắt đầu thu giọng Puck».'; draw(); }).catch(function () {});
+    ghCheck(); draw();
   };
-  LN.gemClick = function (a) {
+  LN.gemClick = function (a, ev) {
+    if (ev && ev.preventDefault && /gm-(sample|listen|export)/.test(a)) ev.preventDefault();
     if (a === 'gm-start') start();
     else if (a === 'gm-stop') { G.stop = true; G.msg = 'Đang dừng sau lượt hiện tại…'; draw(); }
     else if (a === 'gm-sample') libs().then(sample);
     else if (a === 'gm-listen') listenDone();
     else if (a === 'gm-export') exportZips();
+    else if (a === 'gm-pub') publish();
     else return false;
     return true;
   };
 })();
 ;
-(window.LN_V=window.LN_V||{})["gemgen.js"]="20b160d2";
+(window.LN_V=window.LN_V||{})["gemgen.js"]="18d44f2f";

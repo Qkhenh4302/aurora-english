@@ -380,7 +380,7 @@
     if (location.protocol === 'file:' || !window.fetch) return (VP.loading = Promise.resolve(null));
     VP.loading = fetch('voice/index.json?v=' + (window.LN_VPV || '1')).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
       if (!j || !j.packs) return null;
-      var m = {}, n = 0; j.packs.forEach(function (pk, pi) { var off = 0; pk.items.forEach(function (it) { m[it[0]] = [pi, off, it[1]]; off += it[1]; n++; }); });
+      var m = {}, n = 0; j.packs.forEach(function (pk, pi) { var off = 0; pk.items.forEach(function (it) { if (it[2] != null) off = it[2]; if (!m[it[0]]) { m[it[0]] = [pi, off, it[1]]; n++; } off += it[1]; }); });
       VP.idx = { m: m, files: j.packs.map(function (pk) { return pk.f; }), voice: j.voice || '', n: n }; return VP.idx;
     }).catch(function () { return null; });
     return VP.loading;
@@ -2270,4 +2270,4 @@
   LN.boot = function () { route(); };
 })();
 ;
-(window.LN_V=window.LN_V||{})["app.js"]="53ef3d24";
+(window.LN_V=window.LN_V||{})["app.js"]="69e98058";
