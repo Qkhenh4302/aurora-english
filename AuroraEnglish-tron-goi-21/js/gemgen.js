@@ -16,7 +16,7 @@
   function clipB(v) { return v && v.b ? v.b : v; }
   function short(m) { return String(m || '?').replace(/^gemini-/, '').replace(/-tts$/, '').replace('-preview', ''); }
   var RR = 0;
-  var BATCH = 40, MAXCH = 1400, PAR = 2, KBPS = 32;
+  var BATCH = 40, MAXCH = 1400, PAR = 2, KBPS = 48;   // 48 kbps: giữ nguyên 24 kHz. (32 kbps làm lamejs tự đổi sang 22 kHz và bộ đổi bị lỗi → file câm)
   var KEYP = null;
   function apiKey() { if (!KEYP) KEYP = fetch('api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'key', token: token() }) }).then(function (r) { if (r.status === 401) throw { stop: 'Phiên đăng nhập của cô đã hết hạn. Đăng xuất, đăng nhập lại rồi bấm «Tiếp tục».' }; if (!r.ok) throw { stop: 'Máy chủ chưa có khoá GEMINI_API_KEY.' }; return r.json(); }).then(function (j) { return j.key; }, function (e) { KEYP = null; throw e; }); return KEYP; }
   var BSTYLE = {
@@ -101,6 +101,18 @@
     return segs.map(function (sg) { var a = Math.max(0, sg[0] * fr - Math.round(rate * 0.05)), b = Math.min(pcm.length, sg[1] * fr + Math.round(rate * 0.12)); return pcm.subarray(a, b); });
   }
   LN._gemSplit = split; LN._gemParseWav = parseWav;
+  /* Kiểm tra file mp3 vừa tạo có tiếng thật (giải mã lại và đo âm lượng lớn nhất 0..1) */
+  function loud(b) {
+    var C = window.OfflineAudioContext || window.webkitOfflineAudioContext; if (!C) return Promise.resolve(1);
+    return new Promise(function (ok) {
+      try {
+        var ac = new C(1, 1, 24000), done = function (buf) { var d = buf.getChannelData(0), m = 0; for (var i = 0; i < d.length; i += 3) { var a = d[i] < 0 ? -d[i] : d[i]; if (a > m) m = a; } ok(m); };
+        var pr = ac.decodeAudioData(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength), done, function () { ok(0); });
+        if (pr && pr.then) pr.then(done, function () { ok(0); });
+      } catch (e) { ok(1); }
+    });
+  }
+  LN._gemLoud = loud;
   function mp3(pcm, rate) {
     var enc = new window.lamejs.Mp3Encoder(1, rate, KBPS), out = [], blk = 1152, i, b;
     var pad = new Int16Array(Math.round(rate * 0.03));
@@ -154,7 +166,16 @@
         var h = Math.ceil(items.length / 2);
         return doBatch(items.slice(0, h), voice, depth + 1).then(function () { return doBatch(items.slice(h), voice, depth + 1); });
       }
-      return Promise.all(segs.map(function (pcm, k) { return put('clips', items[k].k, { b: mp3(pcm, w.rate), m: w.model }); })).then(function () { G.done += items.length; draw(); });
+      var ok = 0;
+      return Promise.all(segs.map(function (pcm, k) {
+        var pk = 0; for (var i = 0; i < pcm.length; i += 3) { var a = pcm[i] < 0 ? -pcm[i] : pcm[i]; if (a > pk) pk = a; }
+        if (pk < 300) { G.failed[items[k].k] = items[k].t; return; }   // câu Gemini trả về gần như im lặng
+        var b = mp3(pcm, w.rate);
+        return loud(b).then(function (lv) {
+          if (lv < 0.01) { G.failed[items[k].k] = items[k].t; G.msg = '⚠ Một câu ra file câm, sẽ thu lại: ' + items[k].t.slice(0, 50); return; }
+          ok++; return put('clips', items[k].k, { b: b, m: w.model, q: 2 });
+        });
+      })).then(function () { G.done += ok; draw(); });
     }, function (e) {
       if (e && e.retry && (depth || 0) < 3) { G.err++; G.msg = e.msg; draw(); return new Promise(function (ok) { setTimeout(ok, 3000); }).then(function () { return doBatch(items, voice, (depth || 0) + 1); }); }
       if (e && e.retry) { items.forEach(function (x) { G.failed[x.k] = x.t; }); G.err++; G.msg = e.msg; draw(); return; }
@@ -359,9 +380,15 @@
       '<div id="gm-st" class="small"></div><div id="gm-gh" class="small"></div>' +
       '<p class="small" style="margin-top:10px"><a href="#" data-act="gm-sample">▶ Nghe thử 6 câu</a> · <a href="#" data-act="gm-listen">🔊 Nghe 5 câu vừa thu</a> · <a href="#" data-act="gm-compare">🎧 So sánh giọng các mẫu</a> · <a href="#" data-act="gm-one">🎯 Chỉ giữ 1 mẫu</a> · <a href="#" data-act="gm-export">⬇ Tải file zip (dự phòng)</a></p></div>';
   };
+  /* Các câu thu trước bản 36 (không có q:2) đều bị câm do lỗi đổi tần số của lamejs → xoá để thu lại */
+  function purgeOld() {
+    var del = 0;
+    return keys('clips').then(function (ks) { return ks.reduce(function (p, k) { return p.then(function () { return get('clips', k); }).then(function (v) { if (!v || v.q !== 2) { del++; return tx('clips', 'readwrite', function (s) { s.delete(k); }); } }); }, Promise.resolve()); })
+      .then(function () { return del ? put('meta', 'published', null) : null; }).then(function () { return del; }, function () { return 0; });
+  }
   LN.gemInit = function () {
     var cb = document.getElementById('gm-auto'); if (cb) cb.addEventListener('change', function () { try { localStorage.setItem('ln_gem_auto', cb.checked ? '1' : '0'); } catch (e) {} });
-    if (!G.total) Promise.all([keys('clips'), corpus()]).then(function (r) { G.done = r[0].length; G.total = r[1].length; G.list = r[1]; if (!G.msg) G.msg = G.done ? 'Bấm «Thu tiếp giọng Puck» để làm tiếp.' : 'Chưa thu câu nào. Bấm «Bắt đầu thu giọng Puck».'; draw(); }).catch(function () {});
+    if (!G.total) purgeOld().then(function (nDel) { if (nDel) G.msg = '🔧 Đã xoá ' + nDel + ' câu thu trước đây bị lỗi câm (không có tiếng). Bấm «Thu tiếp giọng Puck» để thu lại – đã sửa lỗi.'; return Promise.all([keys('clips'), corpus()]); }).then(function (r) { G.done = r[0].length; G.total = r[1].length; G.list = r[1]; if (!G.msg) G.msg = G.done ? 'Bấm «Thu tiếp giọng Puck» để làm tiếp.' : 'Chưa thu câu nào. Bấm «Bắt đầu thu giọng Puck».'; draw(); }).catch(function () {});
     ghCheck(); draw();
   };
   LN.gemClick = function (a, ev) {
@@ -379,4 +406,4 @@
   };
 })();
 ;
-(window.LN_V=window.LN_V||{})["gemgen.js"]="9d9eb4c6";
+(window.LN_V=window.LN_V||{})["gemgen.js"]="27e9d305";

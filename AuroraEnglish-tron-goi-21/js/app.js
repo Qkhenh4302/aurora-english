@@ -410,11 +410,18 @@
     return VP.ac;
   }
   function vpUnlock() {   // iPhone / iPad: mở khoá âm thanh ngay lần chạm đầu tiên
+    if (!VP.el) { try { var el = VP.el = new Audio(); el.src = 'data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjYwLjE2LjEwMAAAAAAAAAAAAAAA//NwwAAAAAAAAAAAAEluZm8AAAAPAAAABgAAAowAZmZmZmZmZmZmZmZmZmZmZoWFhYWFhYWFhYWFhYWFhYWFo6Ojo6Ojo6Ojo6Ojo6Ojo8LCwsLCwsLCwsLCwsLCwsLC4eHh4eHh4eHh4eHh4eHh4eH/////////////////////AAAAAExhdmM2MC4zMQAAAAAAAAAAAAAAACQCowAAAAAAAAKMPp3BgAAAAAAAAAAAAAAAAAD/8zDEAAAAA0gAAAAATEFNRVVVVUxBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/8zLEQQAAA0gAAAAAVVVVVVVVVUxBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV//MwxIMAAANIAAAAAFVVVVVVVUxBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV//MyxL0AAANIAAAAAFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/zMMS+AAADSAAAAABVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/zMMS+AAADSAAAAABVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ=='; var pp = el.play(); if (pp && pp.catch) pp.catch(function () { VP.el = null; }); } catch (e) { VP.el = null; } }   // Safari: thẻ audio được "mở khoá" trong lúc bấm để phát dự phòng sau này
     var ac = acx(); if (!ac || VP.unlocked) return;
     try { var b = ac.createBuffer(1, 1, 22050), s = ac.createBufferSource(); s.buffer = b; s.connect(ac.destination); s.start(0); VP.unlocked = true; } catch (e) {}
   }
   ['pointerdown', 'touchend', 'keydown', 'mousedown'].forEach(function (ev) { document.addEventListener(ev, vpUnlock, true); });
-  function vpHas(t, m) { return VP.idx && VP.idx.m[vpKey(m, t)]; }
+  function vpHas(t, m) {
+    if (!VP.idx) return null;
+    var e = VP.idx.m[vpKey(m, t)]; if (e) return e;
+    /* chữ do cô sửa có thể dùng dấu nháy cong ’ “ ” hoặc khoảng trắng lạ → thử dạng chuẩn */
+    var n = String(t).replace(/[\u2018\u2019\u02BC]/g, "'").replace(/[\u201C\u201D]/g, '"').replace(/[\u00A0\u2009\u200B]/g, ' ').replace(/\s+/g, ' ').trim();
+    return VP.idx.m[vpKey(m, n)] || VP.idx.m[vpKey(m, n.replace(/'/g, '\u2019'))] || null;
+  }
   LN._vpLog = [];
   function vpLog(x) { LN._vpLog.push(x); if (LN._vpLog.length > 30) LN._vpLog.shift(); }
   var VPQ = { full: {} };
@@ -441,6 +448,30 @@
   function decode(ac, b) {
     return new Promise(function (ok, no) { var pr; try { pr = ac.decodeAudioData(b, ok, no); } catch (er) { no(er); } if (pr && pr.then) pr.then(ok, no); });
   }
+  /* Câu thu bằng Gemini (lamejs) không có phần đầu ID3/Info như các file khác – Safari trên Mac không giải mã được.
+     Thêm phần đầu chuẩn (giống hệt kiểu file ffmpeg) trước khi giải mã / phát. */
+  function mp3Wrap(b) {
+    var u = new Uint8Array(b);
+    if (u.length < 4 || u[0] !== 0xFF || (u[1] & 0xE0) !== 0xE0) return b;
+    var ver = (u[1] >> 3) & 3, lsf = ver !== 3, BR = lsf ? [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160] : [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+    var SR = ver === 3 ? [44100, 48000, 32000] : ver === 2 ? [22050, 24000, 16000] : [11025, 12000, 8000];
+    var sri = (u[2] >> 2) & 3, sr = SR[sri], mono = (u[3] >> 6) === 3, offs = [], p = 0;
+    while (p + 4 <= u.length && u[p] === 0xFF && (u[p + 1] & 0xE0) === 0xE0) {
+      var bi = u[p + 2] >> 4, br = BR[bi], pad = (u[p + 2] >> 1) & 1; if (!br) break;
+      var fl = Math.floor((lsf ? 72 : 144) * br * 1000 / sr) + pad; if (fl < 4) break; offs.push(p); p += fl;
+    }
+    if (!offs.length) return b;
+    var xbi = lsf ? 7 : 5, xlen = Math.floor((lsf ? 72 : 144) * BR[xbi] * 1000 / sr), side = lsf ? (mono ? 9 : 17) : (mono ? 17 : 32);
+    var id3 = [0x49, 0x44, 0x33, 4, 0, 0, 0, 0, 0, 0x23, 0x54, 0x53, 0x53, 0x45, 0, 0, 0, 0x0f, 0, 0, 3, 0x4c, 0x61, 0x76, 0x66, 0x36, 0x30, 0x2e, 0x31, 0x36, 0x2e, 0x31, 0x30, 0x30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    var x = new Uint8Array(xlen), total = xlen + u.length, nf = offs.length, k = 4 + side, i;
+    x[0] = 0xFF; x[1] = u[1] | 1; x[2] = (xbi << 4) | (sri << 2); x[3] = u[3] & 0xC0;
+    function w32(o, v) { x[o] = (v >>> 24) & 255; x[o + 1] = (v >>> 16) & 255; x[o + 2] = (v >>> 8) & 255; x[o + 3] = v & 255; }
+    x[k] = 0x49; x[k + 1] = 0x6e; x[k + 2] = 0x66; x[k + 3] = 0x6f; w32(k + 4, 7); w32(k + 8, nf); w32(k + 12, total);
+    for (i = 0; i < 100; i++) x[k + 16 + i] = Math.min(255, Math.floor(256 * (xlen + offs[Math.min(nf - 1, Math.floor(i * nf / 100))]) / total));
+    var out = new Uint8Array(id3.length + xlen + u.length); out.set(id3, 0); out.set(x, id3.length); out.set(u, id3.length + xlen);
+    return out.buffer;
+  }
+  LN._mp3Wrap = mp3Wrap;
   VP.raw = {};
   function vpRaw(e) { var k = e.join(','); if (!VP.raw[k]) VP.raw[k] = vpBytes(e).catch(function (er) { delete VP.raw[k]; throw er; }); return VP.raw[k]; }
   function vpBuf(e) {
@@ -448,7 +479,7 @@
     if (VP.cache[k]) return Promise.resolve(VP.cache[k]);
     if (VP.pend && VP.pend[k]) return VP.pend[k];
     VP.pend = VP.pend || {};
-    VP.pend[k] = vpRaw(e).then(function (b) { return decode(ac, b.slice(0)).catch(function (er) { vpLog('decode ' + (er && er.message || er)); return { raw: b }; }); }).then(function (buf) {
+    VP.pend[k] = vpRaw(e).then(function (b) { b = mp3Wrap(b); return decode(ac, b.slice(0)).catch(function (er) { vpLog('decode ' + (er && er.message || er)); return { raw: b }; }); }).then(function (buf) {
       delete VP.pend[k]; if (++VP.nc > 600) { VP.cache = {}; VP.nc = 0; } VP.cache[k] = buf; return buf;
     }, function (er) { delete VP.pend[k]; throw er; });
     return VP.pend[k];
@@ -467,7 +498,7 @@
   function playRaw(b, onend, onfail) { dbg('RAW', '', ''); return playRaw0(b, onend, function () { dbg('RAW-LỖI', '', ''); if (onfail) onfail(); }); }
   function playRaw0(b, onend, onfail) {   // dự phòng khi máy không giải mã được bằng Web Audio (một số bản Safari): phát bằng thẻ audio
     try {
-      var url = URL.createObjectURL(new Blob([b], { type: 'audio/mpeg' })), a = new Audio(url);
+      var url = URL.createObjectURL(new Blob([mp3Wrap(b)], { type: 'audio/mpeg' })), a = VP.el || new Audio(); a.src = url;
       TTS.audio = a; a.onended = function () { URL.revokeObjectURL(url); duck(false); if (TTS.audio === a) TTS.audio = null; if (onend) onend(); };
       a.onerror = function () { if (onfail) onfail(); };
       duck(true); var pr = a.play(); if (pr && pr.catch) pr.catch(function () { if (onfail) onfail(); });
@@ -510,7 +541,7 @@
       if (!idx) return out;
       var e = vpHas('Great job!', 'c') || vpHas('apple', 'w'); if (!e) { out.sample = 'không thấy câu mẫu'; return out; }
       var t1 = Date.now();
-      return vpBytes(e).then(function (b) { out.fetchMs = Date.now() - t1; out.bytes = b.byteLength; var t2 = Date.now(); return decode(ac, b.slice(0)).then(function (buf) { out.decode = 'OK ' + buf.duration.toFixed(2) + 's (' + (Date.now() - t2) + 'ms)'; }, function (er) { out.decode = 'LỖI ' + (er && er.message || er); }); }, function (er) { out.fetch = 'LỖI ' + er.message; }).then(function () { out.log = LN._vpLog.slice(-5).join(' | '); vpPlay('Great job!', 'c', null, null); return out; });
+      return vpBytes(e).then(function (b) { b = mp3Wrap(b); out.fetchMs = Date.now() - t1; out.bytes = b.byteLength; var t2 = Date.now(); return decode(ac, b.slice(0)).then(function (buf) { var dd = buf.getChannelData(0), pk = 0; for (var q = 0; q < dd.length; q++) { var av = dd[q] < 0 ? -dd[q] : dd[q]; if (av > pk) pk = av; } out.decode = (pk < 0.01 ? 'LỖI: file câm ' : 'OK ') + buf.duration.toFixed(2) + 's (' + (Date.now() - t2) + 'ms, âm lượng ' + pk.toFixed(2) + ')'; }, function (er) { out.decode = 'LỖI ' + (er && er.message || er); }); }, function (er) { out.fetch = 'LỖI ' + er.message; }).then(function () { out.log = LN._vpLog.slice(-5).join(' | '); vpPlay('Great job!', 'c', null, null); return out; });
     });
   };
   function vpStop() { VP.tok++; if (VP.src) { var s = VP.src; VP.src = null; try { s.onended = null; s.stop(0); } catch (e) {} } }
@@ -2270,4 +2301,4 @@
   LN.boot = function () { route(); };
 })();
 ;
-(window.LN_V=window.LN_V||{})["app.js"]="48854422";
+(window.LN_V=window.LN_V||{})["app.js"]="f5d0fc59";
