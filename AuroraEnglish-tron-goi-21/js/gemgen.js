@@ -9,7 +9,9 @@
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   var VOICE = 'Puck';
   var VOICES = [['Puck', 'Puck – nam trẻ, vui (đã nghe mẫu)'], ['Leda', 'Leda – nữ trẻ, trong trẻo'], ['Kore', 'Kore – nữ, rõ ràng'], ['Aoede', 'Aoede – nữ, nhẹ nhàng'], ['Zephyr', 'Zephyr – nữ, tươi sáng'], ['Fenrir', 'Fenrir – nam, hào hứng'], ['Charon', 'Charon – nam, ấm'], ['Orus', 'Orus – nam, chắc giọng']];
-  var MODELS = ['gemini-2.5-flash-preview-tts', 'gemini-3.8-flash-tts', 'gemini-2.5-flash-tts', 'gemini-3.8-flash-lite-tts'];
+  /* Mỗi mẫu có 100 lượt/ngày riêng: dùng song song tất cả mẫu còn lượt (mẫu nào không có trên tài khoản sẽ tự bỏ qua) */
+  var MODELS = ['gemini-3.8-flash-tts', 'gemini-2.5-flash-preview-tts', 'gemini-3.8-flash-lite-tts', 'gemini-2.5-flash-tts'];
+  var RR = 0;
   var BATCH = 40, MAXCH = 1400, PAR = 2, KBPS = 32;
   var KEYP = null;
   function apiKey() { if (!KEYP) KEYP = fetch('api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'key', token: token() }) }).then(function (r) { if (r.status === 401) throw { stop: 'Phiên đăng nhập của cô đã hết hạn. Đăng xuất, đăng nhập lại rồi bấm «Tiếp tục».' }; if (!r.ok) throw { stop: 'Máy chủ chưa có khoá GEMINI_API_KEY.' }; return r.json(); }).then(function (j) { return j.key; }, function (e) { KEYP = null; throw e; }); return KEYP; }
@@ -107,13 +109,15 @@
 
   /* ---------- gọi máy chủ ---------- */
   function today() { return new Date().toISOString().slice(0, 10); }
+  function perModel(m) { var o = {}; try { o = JSON.parse(localStorage.getItem('ln_gem_pm') || '{}'); } catch (e) {} if (o.d !== today()) o = { d: today(), c: {} }; if (m) { o.c[m] = (o.c[m] || 0) + 1; try { localStorage.setItem('ln_gem_pm', JSON.stringify(o)); } catch (e) {} } return o.c; }
   function reqToday(add) { var o = {}; try { o = JSON.parse(localStorage.getItem('ln_gem_req') || '{}'); } catch (e) {} if (o.d !== today()) o = { d: today(), n: 0 }; if (add) { o.n += add; try { localStorage.setItem('ln_gem_req', JSON.stringify(o)); } catch (e) {} } return o.n; }
   function exhausted() { var e = store.get('ln_note_gemq', null) || {}; return e.d === today() ? e.m || {} : {}; }
   function markExhausted(m) { var e = { d: today(), m: exhausted() }; e.m[m] = 1; store.set('ln_note_gemq', e); }
-  function pickModel() { var ex = exhausted(), bad = G.badModel || {}; for (var i = 0; i < MODELS.length; i++) if (!ex[MODELS[i]] && !bad[MODELS[i]]) return MODELS[i]; return null; }
+  function liveModels() { var ex = exhausted(), bad = G.badModel || {}; return MODELS.filter(function (m) { return !ex[m] && !bad[m]; }); }
+  function pickModel() { var L = liveModels(); if (!L.length) return null; RR = (RR + 1) % L.length; return L[RR]; }   // xoay vòng các mẫu còn lượt
   function callBatch(items, voice) {
     var model = pickModel(); if (!model) return Promise.reject({ stop: 'Hôm nay đã dùng hết lượt của Gemini. Ngày mai mở trang này và bấm «Tiếp tục».' });
-    G.model = model; G.req++; reqToday(1);
+    G.model = model; G.req++; reqToday(1); perModel(model);
     var lines = items.map(function (x) { return x.t; }), mode = items[0].m;
     var prompt = BSTYLE[mode] + '\n\nRead the ' + lines.length + ' lines below for an English lesson. Read every line exactly as written, in order, exactly once. Do not read line numbers, do not add or skip any words. ' +
       'After EACH line stay completely silent for two full seconds before starting the next line. Inside a line, " — " means a second person answers: make a short natural pause (about half a second) there.\n\n' + lines.join('\n');
@@ -177,7 +181,7 @@
           G.stop = true; queue.unshift(b); G.msg = (e && e.stop) || ('Dừng vì lỗi: ' + (e && e.message || e)); draw();
         });
       };
-      var ws = []; for (var i = 0; i < PAR; i++) ws.push(worker());
+      var ws = [], np = Math.min(6, Math.max(PAR, liveModels().length * 2)); for (var i = 0; i < np; i++) ws.push(worker());
       return Promise.all(ws);
     }).then(function () {
       G.run = false;
@@ -298,7 +302,8 @@
     var el = document.getElementById('gm-st'); if (!el) return;
     var pct = G.total ? Math.floor(G.done * 100 / G.total) : 0, used = reqToday(0);
     el.innerHTML = (G.total ? '<div class="tk-bar" style="height:12px;margin:8px 0"><i style="width:' + pct + '%"></i></div><b style="font-size:16px">Đã thu ' + G.done + ' / ' + G.total + ' câu (' + pct + '%)</b>' : '<b>Đã thu ' + G.done + ' câu</b>') +
-      ' · hôm nay đã dùng <b>' + used + '</b>/100 lượt Gemini' + (G.err ? ' · thử lại: ' + G.err : '') +
+      ' · hôm nay đã dùng <b>' + used + '</b> lượt Gemini' + (G.err ? ' · thử lại: ' + G.err : '') +
+      (function () { var pm = perModel(), ex = exhausted(), bad = G.badModel || {}; var ks = Object.keys(pm); return ks.length ? '<div class="tiny muted" style="margin-top:4px">' + ks.map(function (m) { return esc(m.replace(/^gemini-/, '').replace(/-tts$/, '')) + ': ' + pm[m] + (ex[m] ? ' (hết lượt hôm nay)' : bad[m] ? ' (không dùng được)' : ''); }).join(' · ') + '</div>' : ''; })() +
       '<div style="margin-top:6px">' + esc(G.msg) + '</div>' + (G.pub ? '<div style="margin-top:6px">' + esc(G.pub) + '</div>' : '');
     var b1 = document.getElementById('gm-start'); if (b1) { b1.disabled = G.run; b1.textContent = G.run ? '🎙 Đang thu…' : (G.done ? '🎙 Thu tiếp giọng Puck' : '🎙 Bắt đầu thu giọng Puck'); }
     var gb = document.getElementById('gm-gh');
@@ -308,7 +313,7 @@
   LN.gemCard = function () {
     var auto = true; try { auto = localStorage.getItem('ln_gem_auto') !== '0'; } catch (e) {}
     return '<div class="card" style="margin-bottom:16px;border:2px solid var(--pink,#FF5C9A)"><h2>🔊 Giọng đọc của app: Puck (Gemini)</h2>' +
-      '<p class="small muted" style="margin:4px 0 10px">Bấm <b>Thu giọng</b> rồi để trang mở (không tắt máy, không cho máy ngủ). Mỗi ngày Gemini cho 100 lượt; hết lượt máy tự dừng và tự đưa phần đã thu lên app. Hôm sau mở trang này bấm <b>Thu tiếp</b>. Câu nào chưa thu xong, app tạm đọc bằng giọng cũ.</p>' +
+      '<p class="small muted" style="margin:4px 0 10px">Bấm <b>Thu giọng</b> rồi để trang mở (không tắt máy, không cho máy ngủ). Mỗi mẫu Gemini cho 100 lượt/ngày, máy dùng song song mọi mẫu còn lượt; hết lượt máy tự dừng và tự đưa phần đã thu lên app. Hôm sau mở trang này bấm <b>Thu tiếp</b>. Câu nào chưa thu xong, app tạm đọc bằng giọng cũ.</p>' +
       '<p style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><button class="btn btn-lg btn-pink" id="gm-start" data-act="gm-start">🎙 Thu giọng Puck</button><button class="btn" data-act="gm-stop">⏸ Dừng</button><button class="btn btn-mint" data-act="gm-pub">⬆ Đưa lên app ngay</button>' +
       '<label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="gm-auto"' + (auto ? ' checked' : '') + '> Tự đưa lên app khi dừng</label></p>' +
       '<div id="gm-st" class="small"></div><div id="gm-gh" class="small"></div>' +
@@ -332,4 +337,4 @@
   };
 })();
 ;
-(window.LN_V=window.LN_V||{})["gemgen.js"]="18d44f2f";
+(window.LN_V=window.LN_V||{})["gemgen.js"]="224508fa";
