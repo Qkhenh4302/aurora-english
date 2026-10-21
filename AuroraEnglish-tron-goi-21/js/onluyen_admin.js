@@ -186,23 +186,41 @@
     return fetch('api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'key', token: tok() }) })
       .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok || !j.key) throw new Error(r.status === 401 ? 'Phiên đăng nhập hết hạn, cô đăng nhập lại.' : r.status === 503 ? 'Chưa có khoá Gemini trên máy chủ.' : 'Không lấy được khoá Gemini (' + r.status + ')'); return j.key; }); });
   }
-  var MODELS = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-pro'];
+  /* Mẫu AI: hỏi Google danh sách mẫu khoá này dùng được (mẫu cũ bị ngừng cho tài khoản mới), mẫu nào chạy được thì lần sau dùng trước */
+  var MODELS = null, GOOD = null, FALLBACK = ['gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-flash-latest', 'gemini-3.1-pro-preview', 'gemini-2.5-pro'];
+  function gemBase() { return LN._gemBase || 'https://generativelanguage.googleapis.com'; }
+  function models() {
+    if (MODELS) return Promise.resolve(MODELS);
+    return fetch(gemBase() + '/v1beta/models?pageSize=1000', { headers: { 'x-goog-api-key': JOB.key } }).then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) { var L = j && j.models && window.AIPROMPTS ? window.AIPROMPTS.rankModels(j.models) : []; MODELS = L.length ? L.slice(0, 6) : FALLBACK; return MODELS; }, function () { MODELS = FALLBACK; return MODELS; });
+  }
   function gem(parts, opt) {
-    var i = 0, last = null, base = LN._gemBase || 'https://generativelanguage.googleapis.com';
-    function next() {
-      if (i >= MODELS.length) return Promise.reject(last || new Error('AI không trả lời'));
-      var model = MODELS[i++], body = { contents: [{ role: 'user', parts: parts }], generationConfig: { responseMimeType: 'application/json', temperature: 0.2, maxOutputTokens: opt.max || 32000 } };
-      if (/2\.5/.test(model)) body.generationConfig.thinkingConfig = { thinkingBudget: opt.think == null ? 1024 : opt.think };
-      return fetch(base + '/v1beta/models/' + model + ':generateContent', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': JOB.key }, body: JSON.stringify(body) })
-        .then(function (r) { return r.text().then(function (tx) {
-          if (!r.ok) { last = new Error('Gemini ' + r.status + ': ' + tx.slice(0, 200)); if (r.status === 404 || r.status === 400 || r.status >= 500) return next(); if (r.status === 429) last = new Error('Gemini báo hết lượt (429). Cô thử lại sau ít phút.'); throw last; }
-          var j = JSON.parse(tx), c = j.candidates && j.candidates[0], t = c && c.content && (c.content.parts || []).map(function (x) { return x.thought ? '' : x.text || ''; }).join('');
-          var out = parseJ(t);
-          if (!out) { last = new Error('AI trả về dữ liệu hỏng' + (c && c.finishReason ? ' (' + c.finishReason + ')' : '')); if (c && c.finishReason === 'MAX_TOKENS') throw new Error('Đề dài quá, AI không viết hết được. Cô chia file làm hai phần rồi tạo hai đề nhé.'); return next(); }
-          return out;
-        }); }, function (e) { last = new Error('Mạng lỗi khi gọi Gemini: ' + e.message); return next(); });
-    }
-    return next();
+    return models().then(function (L0) {
+      var L = GOOD ? [GOOD].concat(L0.filter(function (m) { return m !== GOOD; })) : L0.slice(), i = 0, last = null, tried = [];
+      function next() {
+        if (i >= L.length) return Promise.reject(last && last.hard ? last : new Error('Không mẫu AI nào trả lời được. ' + tried.join(' · ')));
+        var model = L[i++], body = { contents: [{ role: 'user', parts: parts }], generationConfig: { responseMimeType: 'application/json', temperature: 0.2, maxOutputTokens: opt.max || 32000 } };
+        if (/2\.5/.test(model)) body.generationConfig.thinkingConfig = { thinkingBudget: opt.think == null ? 1024 : opt.think };
+        return fetch(gemBase() + '/v1beta/models/' + model + ':generateContent', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': JOB.key }, body: JSON.stringify(body) })
+          .then(function (r) { return r.text().then(function (tx) {
+            if (!r.ok) {
+              var msg = ''; try { msg = JSON.parse(tx).error.message; } catch (e) { msg = tx.slice(0, 120); }
+              tried.push(model + ': lỗi ' + r.status + (msg ? ' (' + String(msg).slice(0, 90) + ')' : ''));
+              if (r.status === 429) { last = new Error('Gemini báo hết lượt (429) với mẫu ' + model + '. Cô thử lại sau ít phút.'); return next(); }
+              if (r.status === 401 || r.status === 403) { last = new Error('Khoá Gemini bị từ chối (' + r.status + '): ' + String(msg).slice(0, 150)); last.hard = 1; throw last; }
+              return next();
+            }
+            var j = JSON.parse(tx), c = j.candidates && j.candidates[0], t = c && c.content && (c.content.parts || []).map(function (x) { return x.thought ? '' : x.text || ''; }).join('');
+            var out = parseJ(t);
+            if (!out) {
+              if (c && c.finishReason === 'MAX_TOKENS') { last = new Error('Đề dài quá, AI không viết hết được. Cô chia file làm hai phần rồi tạo hai đề nhé.'); last.hard = 1; throw last; }
+              tried.push(model + ': trả về dữ liệu hỏng' + (c && c.finishReason ? ' (' + c.finishReason + ')' : '')); return next();
+            }
+            GOOD = model; return out;
+          }); }, function (e) { if (e && e.hard) throw e; tried.push(model + ': mạng lỗi'); return next(); });
+      }
+      return next();
+    });
   }
   function parseJ(t) { t = String(t || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, ''); try { return JSON.parse(t); } catch (e) { var m = t.match(/\{[\s\S]*\}/); if (m) { try { return JSON.parse(m[0]); } catch (e2) {} } } return null; }
 
@@ -486,4 +504,4 @@
   });
 })();
 ;
-(window.LN_V=window.LN_V||{})["onluyen_admin.js"]="43159cbb";
+(window.LN_V=window.LN_V||{})["onluyen_admin.js"]="895d7eb5";

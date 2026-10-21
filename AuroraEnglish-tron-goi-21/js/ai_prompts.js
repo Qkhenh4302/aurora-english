@@ -91,8 +91,23 @@
     }
     return next();
   }
-  var API = { build: build, call: call, parse: parse, tasks: Object.keys(TASKS), defaultModels: ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.0-flash'] };
+  /* Google ngừng mẫu cũ cho tài khoản mới (vd. 2.5-pro báo 404): hỏi danh sách mẫu tài khoản dùng được rồi xếp mẫu chữ tốt nhất lên đầu */
+  function rankModels(list) {
+    var out = [];
+    (list || []).forEach(function (m) {
+      var name = String((m && m.name) || m || '').replace(/^models\//, ''), meth = m && m.supportedGenerationMethods;
+      if (!/^gemini-/.test(name) || (meth && meth.indexOf('generateContent') < 0)) return;
+      if (/(tts|image|embed|live|audio|native|aqa|imagen|veo|learnlm|robotics|computer|nano|banana|vision|exp-\d)/i.test(name)) return;
+      var v = parseFloat((name.match(/^gemini-(\d+(?:\.\d+)?)/) || [])[1]) || 0;
+      if (/latest/.test(name)) v = 1.99; else if (v < 2) return;
+      var fam = /flash-lite/.test(name) ? 1 : /flash/.test(name) ? 3 : /pro/.test(name) ? 2 : 0;
+      out.push({ n: name, s: fam * 1000 + v * 10 + (/preview|exp/.test(name) ? 0 : 1) });
+    });
+    out.sort(function (a, b) { return b.s - a.s; });
+    return out.map(function (x) { return x.n; }).filter(function (n, i, a) { return a.indexOf(n) === i; });
+  }
+  var API = { build: build, call: call, parse: parse, rankModels: rankModels, tasks: Object.keys(TASKS), defaultModels: ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.0-flash'] };
   if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.AIPROMPTS = API;
 })(this);
 ;
-(window.LN_V=window.LN_V||{})["ai_prompts.js"]="9253ad60";
+(window.LN_V=window.LN_V||{})["ai_prompts.js"]="d75dd9c6";

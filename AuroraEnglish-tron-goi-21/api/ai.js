@@ -10,15 +10,29 @@ function limited(ip, max) {
   if (HITS.size > 5000) HITS.clear();
   return recent.length > (max || 40);
 }
-function models() {
+// Mẫu AI: hỏi Google danh sách mẫu khoá này dùng được (mẫu cũ bị ngừng cho tài khoản mới → 404), giữ 6 giờ
+let FOUND = null, FOUND_T = 0;
+async function discover(key) {
+  if (FOUND && Date.now() - FOUND_T < 6 * 3600000) return FOUND;
+  try {
+    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 4000);
+    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000', { headers: { 'x-goog-api-key': key }, signal: ctl.signal });
+    clearTimeout(t);
+    if (r.ok) { const j = await r.json(); const L = P.rankModels(j.models || []); if (L.length) { FOUND = L.slice(0, 5); FOUND_T = Date.now(); } }
+  } catch (e) { /* dùng danh sách sẵn */ }
+  return FOUND;
+}
+async function models(key) {
   const m = (process.env.GEMINI_MODEL || '').split(',').map((s) => s.trim()).filter(Boolean);
-  return m.length ? m.concat(P.defaultModels.filter((x) => m.indexOf(x) < 0)) : P.defaultModels;
+  const found = (await discover(key)) || [];
+  const base = found.length ? found : ['gemini-3-flash-preview'].concat(P.defaultModels);
+  return m.concat(base.filter((x) => m.indexOf(x) < 0));
 }
 
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   const key = process.env.GEMINI_API_KEY || '';
-  if (req.method === 'GET') { res.status(200).json({ ok: !!key, model: models()[0] }); return; }
+  if (req.method === 'GET') { res.status(200).json({ ok: !!key, model: key ? (await models(key))[0] : '' }); return; }
   if (req.method !== 'POST') { res.status(405).json({ error: 'method' }); return; }
   if (!key) { res.status(503).json({ error: 'Chưa cài khoá AI (GEMINI_API_KEY) trên Vercel.' }); return; }
   // chỉ nhận yêu cầu từ chính trang web này
@@ -32,7 +46,7 @@ module.exports = async (req, res) => {
   if (!b || P.tasks.indexOf(b.task) < 0) { res.status(400).json({ error: 'task' }); return; }
   if (b.audio && (typeof b.audio.data !== 'string' || b.audio.data.length > 2500000)) { res.status(413).json({ error: 'Đoạn ghi âm quá dài.' }); return; }
   try {
-    const out = await P.call(key, b.task, b, models());
+    const out = await P.call(key, b.task, b, await models(key));
     res.status(200).json(out);
   } catch (e) {
     const st = e && e.status === 429 ? 429 : 502;
