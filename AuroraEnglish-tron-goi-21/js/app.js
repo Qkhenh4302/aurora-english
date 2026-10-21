@@ -304,14 +304,25 @@
   /* Hiệu ứng chữ nổi khi trả lời đúng / sai trong trò chơi */
   /* Lời khen / động viên bằng giọng nhân vật (chỉ dùng giọng AI, không dùng giọng máy) */
   var CHEERS = { ok: ['Great job!', 'Awesome!', 'You got it!', 'Super!', 'Well done!', 'Fantastic!', 'Yay! That\'s right!', 'Excellent!'], no: ['Oops! Try again!', 'Almost! You can do it!', 'Nice try!', 'Keep going!'] };
+  /* Lời khen / động viên: nói SAU khoảng 1,3 giây và chờ máy đọc xong từ của trò chơi (không chen lẫn vào trò chơi) */
+  var CH = { timer: 0, src: null };
+  function speaking() { return (TTS.audio && !TTS.audio.paused) || VP.src || ('speechSynthesis' in window && speechSynthesis.speaking); }
   LN.cheer = function (ok) {
     if (!settings().sound) return;
-    if ((TTS.audio && !TTS.audio.paused) || VP.src) return;   // đang đọc câu hỏi thì không chen ngang
     if (Date.now() - (LN._cheerT || 0) < 3500) return;
-    var t = pick(CHEERS[ok ? 'ok' : 'no']);
-    if (vpHas(t, 'c')) { LN._cheerT = Date.now(); vpPlay(t, 'c', null, null); return; }
-    if (!serverTTS()) return; LN._cheerT = Date.now();
-    playTTS(t, 'c', null, function () {});
+    LN._cheerT = Date.now();
+    var t = pick(CHEERS[ok ? 'ok' : 'no']), hash = location.hash, waited = 0;
+    clearTimeout(CH.timer);
+    var go = function () {
+      if (location.hash !== hash) return;                       // đã sang trang khác thì thôi
+      if (speaking() && waited < 4000) { waited += 250; CH.timer = setTimeout(go, 250); return; }
+      if (Date.now() - (VP.lastEnd || 0) < 600) { CH.timer = setTimeout(go, 150); return; }   // nghỉ một nhịp sau khi đọc xong từ
+      var e = vpHas(t, 'c'), ac = e && acx();
+      if (e && ac && ac.state === 'running') {
+        vpBuf(e).then(function (buf) { if (!buf || buf.raw || speaking()) return; var s = ac.createBufferSource(); s.buffer = buf; var g = ac.createGain(); g.gain.value = 0.9; s.connect(g); g.connect(ac.destination); CH.src = s; s.start(0); }, function () {});
+      } else if (!e && serverTTS()) playTTS(t, 'c', null, function () {});
+    };
+    CH.timer = setTimeout(go, 1300);
   };
   var burst = LN.burst = function (ok, text) {
     var b = document.createElement('div'); b.className = 'burst ' + (ok ? 'ok' : 'no');
@@ -357,7 +368,8 @@
   /* Giọng cô đã chọn cho cả trang (đồng bộ mọi máy qua ln_ttsv) */
   function ttsV() { var v = store.get('ln_ttsv', null); return v && v.id ? String(v.id).replace(/[^a-z0-9]/g, '') : ''; }
   LN.ttsV = ttsV;
-  function ttsUrl(t, m) { var v = ttsV(); return 'api/tts?m=' + m + (v ? '&v=' + v : '') + '&t=' + encodeURIComponent(t); }
+  function gemVoice() { var m = VP.idx && /^Gemini (\w+)/.exec(VP.idx.voice || ''); return m ? m[1] : ''; }
+  function ttsUrl(t, m) { var gv = gemVoice(), v = gv ? 'gem' : ttsV(); return 'api/tts?m=' + m + (v ? '&v=' + v : '') + (gv ? '&gv=' + gv : '') + '&t=' + encodeURIComponent(t); }
   LN.ttsUrl = ttsUrl;
   /* ===== Giọng đọc tạo sẵn (Fenrir – Kokoro), đóng gói trong thư mục voice/: mọi máy nghe y hệt nhau ===== */
   var VP = { idx: null, loading: null, packs: {}, cache: {}, nc: 0, ac: null, src: null, tok: 0, unlocked: false };
@@ -373,7 +385,18 @@
     }).catch(function () { return null; });
     return VP.loading;
   };
-  LN._vp = VP;
+  LN._vp = VP; LN.vpKey = vpKey;
+  /* Bảng theo dõi giọng đọc (bật bằng ?vpdebug=1, tắt bằng ?vpdebug=0) – để kiểm tra trên từng máy */
+  try { var qd = /[?&]vpdebug=(\d)/.exec(location.search); if (qd) localStorage.setItem('ln_vpdebug', qd[1]); } catch (e) {}
+  var DBG = (function () { try { return localStorage.getItem('ln_vpdebug') === '1'; } catch (e) { return false; } })(), DL = [];
+  function dbg(kind, t, info) {
+    if (!DBG) return;
+    DL.unshift((new Date()).toTimeString().slice(0, 8) + ' ' + kind + ' «' + String(t).slice(0, 40) + '»' + (info ? ' ' + info : '')); DL.length = Math.min(DL.length, 10);
+    var el = document.getElementById('vp-dbg');
+    if (!el) { el = document.createElement('div'); el.id = 'vp-dbg'; el.style.cssText = 'position:fixed;right:8px;bottom:8px;z-index:99999;max-width:520px;background:rgba(0,0,0,.82);color:#fff;font:12px/1.35 monospace;padding:8px 10px;border-radius:10px;pointer-events:none;white-space:pre-wrap'; document.body.appendChild(el); }
+    el.textContent = 'GIỌNG: ' + (VP.idx ? VP.idx.voice + ' ' + VP.idx.n : 'chưa tải') + ' | audio=' + (VP.ac ? VP.ac.state : '-') + '\n' + DL.join('\n');
+  }
+  LN._dbg = dbg;
   if (location.protocol === 'file:') setTimeout(function () { if (document.getElementById('vp-file')) return; var d = document.createElement('div'); d.id = 'vp-file'; d.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;z-index:9999;background:#FFF4D6;border:2px solid #F0B429;border-radius:14px;padding:10px 14px;font:600 14px/1.4 sans-serif;color:#5B3B00;box-shadow:0 6px 20px rgba(0,0,0,.15)'; d.innerHTML = '⚠️ Đang mở bằng file trên máy nên KHÔNG có giọng đọc chuẩn (giọng số 5). Hãy mở trang web: <b>aurora-tienganh.vercel.app</b> <button style="margin-left:8px" onclick="this.parentNode.remove()">Đóng</button>'; document.body.appendChild(d); }, 1500);
   LN.vpInfo = function () { return VP.idx ? { voice: VP.idx.voice, n: VP.idx.n } : null; };
   setTimeout(function () { LN.vpLoad().then(function () { warmSay(); }); }, 300);
@@ -383,7 +406,7 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watchApp); else watchApp();
   function acx() {
     if (!VP.ac) { var C = window.AudioContext || window.webkitAudioContext; if (!C) return null; try { VP.ac = new C(); } catch (e) { return null; } }
-    if (VP.ac.state === 'suspended' && VP.ac.resume) { try { VP.ac.resume(); } catch (e) {} }
+    if (VP.ac.state !== 'running' && VP.ac.state !== 'closed' && VP.ac.resume) { try { VP.ac.resume(); } catch (e) {} }   // Safari: cả trạng thái 'interrupted'
     return VP.ac;
   }
   function vpUnlock() {   // iPhone / iPad: mở khoá âm thanh ngay lần chạm đầu tiên
@@ -441,7 +464,8 @@
   }
   LN.vpWarmTexts = function (arr) { if (!VP.idx) return; (arr || []).forEach(function (x) { if (x && x[0]) vpWarm(sayNormP(x[0], x[1] || 'w'), x[1] || 'w'); }); };
   function sayNormP(t, m) { return m === 'p' ? passNorm(t) : sayNorm(t); }
-  function playRaw(b, onend, onfail) {   // dự phòng khi máy không giải mã được bằng Web Audio (một số bản Safari): phát bằng thẻ audio
+  function playRaw(b, onend, onfail) { dbg('RAW', '', ''); return playRaw0(b, onend, function () { dbg('RAW-LỖI', '', ''); if (onfail) onfail(); }); }
+  function playRaw0(b, onend, onfail) {   // dự phòng khi máy không giải mã được bằng Web Audio (một số bản Safari): phát bằng thẻ audio
     try {
       var url = URL.createObjectURL(new Blob([b], { type: 'audio/mpeg' })), a = new Audio(url);
       TTS.audio = a; a.onended = function () { URL.revokeObjectURL(url); duck(false); if (TTS.audio === a) TTS.audio = null; if (onend) onend(); };
@@ -457,20 +481,21 @@
       if (buf.raw) { playRaw(buf.raw, onend, onfail); return; }
       var start = function () {
         if (tok !== VP.tok) return;
+        dbg('PHÁT', t, 'audio=' + ac.state);
         var s = ac.createBufferSource(); s.buffer = buf;
         s.playbackRate.value = 1;   // giữ nguyên giọng gốc trên mọi máy (đổi tốc độ sẽ làm méo/lệch giọng)
         s.connect(ac.destination);
-        s.onended = function () { if (VP.src === s) { VP.src = null; duck(false); if (onend) onend(); } };
+        s.onended = function () { VP.lastEnd = Date.now(); if (VP.src === s) { VP.src = null; duck(false); if (onend) onend(); } };
         VP.src = s; duck(true); s.start(0);
       };
       if (ac.state !== 'running' && ac.resume) {
         var done = false;
         ac.resume().then(function () { if (!done) { done = true; start(); } }, function () {});
-        setTimeout(function () { if (done) return; done = true; vpLog('ac ' + ac.state); vpRaw(e).then(function (b) { if (tok === VP.tok) playRaw(b, onend, onfail); }, function () { if (onfail) onfail(); }); }, 350);
+        setTimeout(function () { if (done) return; if (ac.state === 'running') { done = true; start(); return; } done = true; vpLog('ac ' + ac.state); dbg('AUDIO-' + ac.state, t, ''); vpRaw(e).then(function (b) { if (tok === VP.tok) playRaw(b, onend, onfail); }, function () { if (onfail) onfail(); }); }, 900);
       } else start();
     };
     vpBuf(e).then(go, function (er) {
-      vpLog('fail ' + (er && er.message || er));
+      vpLog('fail ' + (er && er.message || er)); dbg('LỖI-TẢI', t, er && er.message);
       vpBuf(e).then(go, function () { ttsBusy(false); if (tok === VP.tok && onfail) onfail(); });   // thử lại một lần
     });
     return true;
@@ -489,9 +514,10 @@
     });
   };
   function vpStop() { VP.tok++; if (VP.src) { var s = VP.src; VP.src = null; try { s.onended = null; s.stop(0); } catch (e) {} } }
-  function stopSpeak() { vpStop(); if (TTS.audio) { try { TTS.audio.pause(); } catch (e) {} TTS.audio = null; } if ('speechSynthesis' in window) speechSynthesis.cancel(); duck(false); }
+  function stopSpeak() { vpStop(); if (CH.src) { try { CH.src.stop(0); } catch (e) {} CH.src = null; } if (TTS.audio) { try { TTS.audio.pause(); } catch (e) {} TTS.audio = null; } if ('speechSynthesis' in window) speechSynthesis.cancel(); duck(false); }
   LN.stopSpeak = stopSpeak;
   function playTTS(text, mode, onend, onfail) {
+    dbg('MÁY-CHỦ', text, mode);
     var a = new Audio(ttsUrl(text, mode)), done = false, started = false;
     TTS.audio = a; a.preload = 'auto';
     var r = settings().rate; a.playbackRate = mode === 'p' ? 0.95 : Math.max(0.7, Math.min(1.1, r / 0.85));
@@ -511,6 +537,7 @@
     return a;
   }
   function browserSpeak(text, rate, onend) {
+    dbg('GIỌNG-MÁY', text, '');
     if (!('speechSynthesis' in window)) { toast('Máy này chưa đọc được tiếng Anh. Hãy mở bằng Chrome, Edge hoặc Safari.'); return; }
     if (!voice) pickVoice();
     speechSynthesis.cancel();
@@ -524,7 +551,9 @@
     LN._passTok = (LN._passTok || 0) + 1; stopSpeak();
     if (!t) return;
     if (LN._spk) LN._spk.push([t, VP.idx ? !!vpHas(t, 'w') : null, location.hash]);
-    var other = function () { if (serverTTS() && t.length <= 400) playTTS(t, 'w', null, function () { browserSpeak(t, rate); }); else browserSpeak(t, rate); };
+    dbg(VP.idx ? (vpHas(t, 'w') ? 'CÓ' : 'THIẾU') : 'NOIDX', t);
+    /* câu chưa có sẵn: nhờ máy chủ tạo đúng giọng của gói; KHÔNG dùng giọng có sẵn của máy khi đã có gói giọng (tránh lẫn giọng) */
+    var other = function () { if (serverTTS() && t.length <= 400) playTTS(t, 'w', null, function () { if (!VP.idx) browserSpeak(t, rate); }); else if (!VP.idx) browserSpeak(t, rate); };
     if (!VP.idx && VP.loading && !VP.waited && location.protocol !== 'file:') {   // chưa tải xong danh mục giọng: chờ một chút thay vì đổi giọng
       var tk = LN._passTok, gave = false;
       setTimeout(function () { if (!gave) { gave = true; VP.waited = true; if (tk === LN._passTok) other(); } }, 2500);
@@ -547,10 +576,10 @@
       var after = function () { if (tok !== LN._passTok) return; var gap = p.br ? 900 : /[,;:]$/.test(p.t) ? 350 : 650; i++; setTimeout(next, gap); };
       mark(i);
       if (parts[i + 1]) vpWarm(passNorm(parts[i + 1].t), 'p');
-      if (vpPlay(tx, 'p', after, function () { browserPass(tx, after); })) return;
+      if (vpPlay(tx, 'p', after, function () { if (VP.idx) after(); else browserPass(tx, after); })) return;
       if (parts[i + 1] && serverTTS()) { var pre = new Audio(ttsUrl(parts[i + 1].t.replace(/\(\d+\)\s*/g, '').replace(/_+/g, ', …, ').replace(/…/g, ', ').replace(/\s+/g, ' ').trim(), 'p')); pre.preload = 'auto'; }
-      if (serverTTS() && tx.length <= 400) playTTS(tx, 'p', after, function () { browserPass(tx, after); });
-      else browserPass(tx, after);
+      if (serverTTS() && tx.length <= 400) playTTS(tx, 'p', after, function () { if (VP.idx) after(); else browserPass(tx, after); });
+      else if (VP.idx) after(); else browserPass(tx, after);
     }
     next();
   };
@@ -2241,4 +2270,4 @@
   LN.boot = function () { route(); };
 })();
 ;
-(window.LN_V=window.LN_V||{})["app.js"]="d0656922";
+(window.LN_V=window.LN_V||{})["app.js"]="53ef3d24";

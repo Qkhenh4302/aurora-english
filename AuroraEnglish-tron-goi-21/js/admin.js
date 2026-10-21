@@ -81,7 +81,7 @@
     if (/^(grammar|ai|data|account|roster)$/.test(active)) active = 'caidat';
     function nl(id, href, icon, label) { return '<a href="' + href + '" class="' + (active === id ? 'on' : '') + '">' + ic(icon, 19) + label + '</a>'; }
     LN.render('<div class="adm"><aside class="aside"><a class="brand" href="#/admin">' + LN.logo(36) + '<span class="bname">Aurora <b>English</b></span></a>' +
-      '<span class="aver">Bản cập nhật 26 · 21/10</span><span class="lb">Quản lý</span>' + nl('lop', '#/admin', 'users', 'Lớp học') + nl('hocphi', '#/admin/hocphi', 'money', 'Học phí') + nl('home', '#/admin/tiendo', 'chart', 'Tiến độ học app') + nl('baitap', '#/admin/baitap', 'book', 'Làm bài & sửa bài') + nl('ai', '#/admin/ai', 'sound', '🔊 Giọng đọc & AI') + nl('caidat', '#/admin/caidat', 'key', 'Cài đặt') +
+      '<span class="aver">Bản cập nhật 29 · 21/10</span><span class="lb">Quản lý</span>' + nl('lop', '#/admin', 'users', 'Lớp học') + nl('hocphi', '#/admin/hocphi', 'money', 'Học phí') + nl('home', '#/admin/tiendo', 'chart', 'Tiến độ học app') + nl('baitap', '#/admin/baitap', 'book', 'Làm bài & sửa bài') + nl('ai', '#/admin/ai', 'sound', '🔊 Giọng đọc & AI') + nl('caidat', '#/admin/caidat', 'key', 'Cài đặt') +
       '<span class="lb">Khác</span><a href="#/">' + ic('eye', 19) + 'Mở trang học sinh</a><a href="#" data-act="a-logout">' + ic('out', 19) + 'Đăng xuất' + (cur() ? ' (' + esc(cur().user) + ')' : '') + '</a></aside>' +
       '<main class="amain">' + staleWarn() + body + '</main></div>');
   }
@@ -416,6 +416,7 @@
       '<h3 style="margin:14px 0 4px">Chọn giọng cho cả trang web</h3><p class="small muted">Bấm ▶ nghe từng giọng, ưng giọng nào bấm <b>Dùng giọng này</b> — mọi máy của các bé sẽ đổi sang giọng đó. Sau đó bấm <b>Tạo sẵn giọng đọc</b> bên dưới.</p><div id="tts-pick" class="small muted">Đang tải danh sách giọng…</div>' +
       '<h3 style="margin:14px 0 4px">Tạo sẵn giọng đọc cho toàn bộ bài (mọi máy nghe cùng một giọng, bấm là nghe ngay)</h3><p class="small muted">Chỉ cần làm một lần (và sau khi thêm bài mới). Để máy chạy đến khi xong; đóng trang thì lần sau bấm lại sẽ chạy tiếp phần còn thiếu.</p>' +
       '<p><button class="btn" data-act="a-ttsgen">🎙 Tạo sẵn giọng đọc</button> <button class="btn btn-sm" data-act="a-ttsstop">Dừng</button> <span id="tts-gen" class="small"></span></p></div>');
+    if (am && LN.gemCard) { am.insertAdjacentHTML('afterbegin', LN.gemCard()); LN.gemInit(); }
 
   }
   LN.adminAI = viewAI;
@@ -943,6 +944,7 @@
       var mp = LN.cloud && LN.cloud.mergeProg ? LN.cloud.mergeProg(LN.progOf(tu), LN.progOf(fu)) : LN.progOf(fu);
       mp.updated = Date.now(); LN.saveProgOf(tu, mp); toast('Đã gộp tiến độ vào ' + tu); viewData();
     }
+    else if (/^gm-/.test(a) && LN.gemClick && LN.gemClick(a)) {}
     else if (a === 'a-vptest') {
       var vt = document.getElementById('vp-test'); vt.textContent = '⏳ Đang kiểm tra…';
       LN.vpSelfTest().then(function (r) { vt.innerHTML = (r.decode && /^OK/.test(r.decode) ? '<b style="color:var(--mint-dk)">✅ Giọng Fenrir chạy tốt trên máy này</b> (bạn sẽ nghe "Great job!")' : '<b style="color:var(--red-dk)">❌ Có lỗi – chụp màn hình gửi kỹ thuật</b>') + '<br><code style="font-size:12px;white-space:pre-wrap">' + esc(JSON.stringify(r)) + '</code>'; });
@@ -1032,4 +1034,4 @@
   };
 })();
 ;
-(window.LN_V=window.LN_V||{})["admin.js"]="689469b8";
+(window.LN_V=window.LN_V||{})["admin.js"]="6436b43f";

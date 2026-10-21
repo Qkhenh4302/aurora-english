@@ -47,7 +47,7 @@ async function ggen(text, mode, pre) {
   const j = await r.json(); if (!j.audioContent) throw new Error('google noaudio');
   return Buffer.from(j.audioContent, 'base64');
 }
-function idOf(text, mode, pre) { return crypto.createHash('md5').update((pre === 'gem' ? SV + '|' + VOICE : 'g2|' + pre + '|' + PRESETS[pre].v + '|' + (PRESETS[pre].pitch || 0)) + '|' + mode + '|' + String(text).replace(/\s+/g, ' ').trim().toLowerCase()).digest('hex'); }
+function idOf(text, mode, pre, gv) { return crypto.createHash('md5').update((pre === 'gem' ? SV + '|' + (gv || VOICE) : 'g2|' + pre + '|' + PRESETS[pre].v + '|' + (PRESETS[pre].pitch || 0)) + '|' + mode + '|' + String(text).replace(/\s+/g, ' ').trim().toLowerCase()).digest('hex'); }
 function readBody(req) {
   if (req.body && typeof req.body === 'object') return Promise.resolve(req.body);
   if (typeof req.body === 'string') { try { return Promise.resolve(JSON.parse(req.body)); } catch (e) { return Promise.resolve({}); } }
@@ -83,13 +83,13 @@ async function cgem(text, mode) {
   const j = await r.json(); if (!j.audioContent) throw new Error('cloud-gemini noaudio');
   return Buffer.from(j.audioContent, 'base64');
 }
-async function gen(text, mode) {
+async function gen(text, mode, gv) {
   let last = null;
   for (const model of MODELS) {
     const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent', {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': KEY },
       body: JSON.stringify({ contents: [{ parts: [{ text: STYLE[mode] + '\n' + text }] }],
-        generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE } } } } })
+        generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: gv || VOICE } } } } })
     });
     if (r.status === 404 || r.status === 400) { last = new Error(model + ' ' + r.status); continue; }
     if (!r.ok) { const e = new Error('tts ' + r.status); e.status = r.status; throw e; }
@@ -101,8 +101,66 @@ async function gen(text, mode) {
   throw last || new Error('tts');
 }
 
+/* giới hạn tạo mới khi học sinh nghe câu chưa có sẵn: tối đa 60 câu / giờ / máy (tránh tốn tiền nếu bị gọi bừa) */
+const HITS = new Map();
+function tooMany(ip) { const now = Date.now(), w = (HITS.get(ip) || []).filter((t) => now - t < 3600000); w.push(now); HITS.set(ip, w); if (HITS.size > 5000) HITS.clear(); return w.length > 60; }
+/* ===== Tạo giọng Gemini hàng loạt (chỉ cô / quản trị dùng): mỗi lượt đọc nhiều câu, nghỉ 2 giây giữa các câu ===== */
+const GVOICES = ['Zephyr','Puck','Charon','Kore','Fenrir','Leda','Orus','Aoede','Callirrhoe','Autonoe','Enceladus','Iapetus','Umbriel','Algieba','Despina','Erinome','Algenib','Rasalgethi','Laomedeia','Achernar','Alnilam','Schedar','Gacrux','Pulcherrima','Achird','Zubenelgenubi','Vindemiatrix','Sadachbia','Sadaltager','Sulafat'];
+const GMODELS = ['gemini-2.5-flash-preview-tts','gemini-2.5-flash-tts','gemini-3.8-flash-tts','gemini-3.8-flash-lite-tts','gemini-2.5-pro-preview-tts','gemini-2.5-pro-tts'];
+const BSTYLE = {
+  w: 'Voice: a warm, friendly, cheerful young American English teacher talking to young children. Clear standard American pronunciation, natural expressive intonation that rises for questions and falls for statements, relaxed medium-slow pace, never rushed.',
+  p: 'Voice: a warm, friendly young American English teacher reading a short story aloud to young children. Gentle expressive storytelling, clear standard American pronunciation, slow calm pace, short pause at commas and a clear pause at each full stop.',
+  c: 'Voice: a warm, friendly young American English teacher cheering a child who just answered. Bright, happy and encouraging, natural, not shouting.'
+};
+async function isAdmin(tok) {
+  if (!tok || !/^[a-f0-9]{48}$/.test(tok)) return false;
+  const [s] = await redis([['GET', 'ae:s:' + tok]]); if (!s) return false;
+  try { return JSON.parse(s).role !== 'student'; } catch (e) { return false; }
+}
+async function gbatch(lines, mode, voice, model) {
+  const n = lines.length;
+  const prompt = BSTYLE[mode] + '\n\nRead the ' + n + ' lines below for an English lesson. Read every line exactly as written, in order, exactly once. Do not read line numbers, do not add or skip any words. ' +
+    'After EACH line stay completely silent for two full seconds before starting the next line. Inside a line, " — " means a second person answers: make a short natural pause (about half a second) there.' +
+    (n === 1 ? '' : '') + '\n\n' + lines.join('\n');
+  const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': KEY },
+    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } } })
+  });
+  if (!r.ok) { const e = new Error((await r.text()).slice(0, 600)); e.status = r.status; throw e; }
+  const j = await r.json(), part = ((((j.candidates || [])[0] || {}).content || {}).parts || []).filter((x) => x.inlineData)[0];
+  if (!part) { const e = new Error('noaudio ' + JSON.stringify(j).slice(0, 300)); e.status = 502; throw e; }
+  const m = /rate=(\d+)/.exec(part.inlineData.mimeType || ''), rate = m ? +m[1] : 24000;
+  return wav(Buffer.from(part.inlineData.data, 'base64'), rate);
+}
+async function batchHandler(b, res) {
+  res.setHeader('Cache-Control', 'no-store');
+  if (!KEY) { res.status(503).json({ error: 'nokey' }); return; }
+  if (!(await isAdmin(b.token))) { res.status(401).json({ error: 'login' }); return; }
+  const lines = (Array.isArray(b.lines) ? b.lines : []).map((x) => String(x || '').replace(/\s+/g, ' ').trim().slice(0, 400)).filter(Boolean).slice(0, 40);
+  const mode = b.m === 'p' ? 'p' : b.m === 'c' ? 'c' : 'w', voice = GVOICES.indexOf(b.voice) >= 0 ? b.voice : 'Puck', model = GMODELS.indexOf(b.model) >= 0 ? b.model : GMODELS[0];
+  if (!lines.length) { res.status(400).json({ error: 'lines' }); return; }
+  try {
+    const buf = await gbatch(lines, mode, voice, model);
+    res.setHeader('Content-Type', 'audio/wav'); res.setHeader('X-Model', model); res.status(200).send(buf);
+  } catch (e) {
+    res.status(e.status === 429 ? 429 : e.status === 404 ? 404 : e.status === 400 ? 400 : 502).json({ error: e.status === 429 ? 'quota' : 'gen', status: e.status || 0, detail: String(e.message || e).slice(0, 600) });
+  }
+}
+
 module.exports = async (req, res) => {
   const q = req.query || {};
+  if (req.method === 'POST') {
+    const b0 = await readBody(req);
+    if (b0 && b0.action === 'batch') { await batchHandler(b0, res); return; }
+    if (b0 && b0.action === 'key') {   // chỉ cô / quản trị đã đăng nhập: lấy khoá để máy của cô gọi Gemini trực tiếp (lượt dài, ít tốn lượt/ngày)
+      res.setHeader('Cache-Control', 'no-store');
+      if (!KEY) { res.status(503).json({ error: 'nokey' }); return; }
+      if (!(await isAdmin(b0.token))) { res.status(401).json({ error: 'login' }); return; }
+      res.status(200).json({ key: KEY }); return;
+    }
+    if (b0 && b0.action === 'check') { res.setHeader('Cache-Control', 'no-store'); res.status(200).json({ ok: !!KEY, admin: await isAdmin(b0.token), voices: GVOICES, models: GMODELS }); return; }
+    req.body = b0;
+  }
   if (req.method === 'POST') {   // tạo sẵn: cho biết câu nào chưa có giọng
     const b = await readBody(req), items = Array.isArray(b.items) ? b.items.slice(0, 200) : [];
     const pre = presetOf(b.v);
@@ -116,8 +174,8 @@ module.exports = async (req, res) => {
   if (q.check) { res.setHeader('Cache-Control', 'no-store'); const pre = presetOf(q.v); res.status(200).json({ ok: !!pre, engine: pre === 'gem' ? (GKEY ? 'g' : 'm') : pre ? 'g' : '', preset: pre, def: DEF, google: !!GKEY, presets: Object.keys(PRESETS).filter((k) => GKEY || PRESETS[k].gem).map((k) => ({ id: k, name: PRESETS[k].name })), paused: Date.now() < BAD }); return; }
   if (!text) { res.status(400).json({ error: 'text' }); return; }
   if (!ENGINE) { res.setHeader('Cache-Control', 'no-store'); res.status(503).json({ error: 'nokey' }); return; }
-  const pre = presetOf(q.v);
-  const id = idOf(text, mode, pre), rk = 'ae:tts:' + id;
+  const pre = presetOf(q.v), gv = GVOICES.indexOf(q.gv) >= 0 ? q.gv : '';
+  const id = idOf(text, mode, pre, gv), rk = 'ae:tts:' + id;
   try {
     const [hit] = await redis([['GET', rk]]);
     let buf = null, type = 'audio/wav';
@@ -128,13 +186,15 @@ module.exports = async (req, res) => {
         if (buf.length < 700000) await redis([['SET', rk, 'mp3:' + buf.toString('base64')]]);
       } else {
         let done = false;
-        if (GKEY && Date.now() > CGBAD) {
+        const ip = String((req.headers && (req.headers['x-forwarded-for'] || '')) || '').split(',')[0] || 'x';
+        if (tooMany(ip)) { res.setHeader('Cache-Control', 'no-store'); res.status(429).json({ error: 'busy' }); return; }
+        if (GKEY && !gv && Date.now() > CGBAD) {
           try { buf = await cgem(text, mode); type = 'audio/mpeg'; done = true; if (buf.length < 700000) await redis([['SET', rk, 'mp3:' + buf.toString('base64')]]); }
           catch (e) { if (!KEY) throw e; if (e.status === 403 || e.status === 400 || e.status === 404) CGBAD = Date.now() + 600000; }
         }
         if (!done) {
           if (Date.now() < BAD) { res.setHeader('Cache-Control', 'no-store'); res.status(503).json({ error: 'busy' }); return; }
-          buf = await gen(text, mode);
+          buf = await gen(text, mode, gv);
           if (buf.length < 700000) await redis([['SET', rk, buf.toString('base64')]]);
         }
       }
@@ -149,4 +209,4 @@ module.exports = async (req, res) => {
   }
 };
 
-module.exports.config = { maxDuration: 30 };
+module.exports.config = { maxDuration: 60 };
