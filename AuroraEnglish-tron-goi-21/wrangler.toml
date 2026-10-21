@@ -1,0 +1,5 @@
+# Cloudflare Pages: thư mục gốc của dự án = thư mục này (AuroraEnglish-tron-goi-21)
+name = "aurora-tienganh"
+pages_build_output_dir = "."
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]

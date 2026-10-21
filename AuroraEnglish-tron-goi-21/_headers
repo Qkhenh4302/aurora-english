@@ -1,0 +1,8 @@
+/js/*
+  Cache-Control: public, max-age=0, must-revalidate
+/
+  Cache-Control: no-cache
+/index.html
+  Cache-Control: no-cache
+/voice/*
+  Cache-Control: public, max-age=86400
