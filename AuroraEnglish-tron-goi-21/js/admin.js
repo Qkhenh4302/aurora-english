@@ -81,7 +81,7 @@
     if (/^(grammar|ai|data|account|roster)$/.test(active)) active = 'caidat';
     function nl(id, href, icon, label) { return '<a href="' + href + '" class="' + (active === id ? 'on' : '') + '">' + ic(icon, 19) + label + '</a>'; }
     LN.render('<div class="adm"><aside class="aside"><a class="brand" href="#/admin">' + LN.logo(36) + '<span class="bname">Aurora <b>English</b></span></a>' +
-      '<span class="aver">Bản cập nhật 24 · 21/10</span><span class="lb">Quản lý</span>' + nl('lop', '#/admin', 'users', 'Lớp học') + nl('hocphi', '#/admin/hocphi', 'money', 'Học phí') + nl('home', '#/admin/tiendo', 'chart', 'Tiến độ học app') + nl('baitap', '#/admin/baitap', 'book', 'Làm bài & sửa bài') + nl('ai', '#/admin/ai', 'sound', '🔊 Giọng đọc & AI') + nl('caidat', '#/admin/caidat', 'key', 'Cài đặt') +
+      '<span class="aver">Bản cập nhật 25 · 21/10</span><span class="lb">Quản lý</span>' + nl('lop', '#/admin', 'users', 'Lớp học') + nl('hocphi', '#/admin/hocphi', 'money', 'Học phí') + nl('home', '#/admin/tiendo', 'chart', 'Tiến độ học app') + nl('baitap', '#/admin/baitap', 'book', 'Làm bài & sửa bài') + nl('ai', '#/admin/ai', 'sound', '🔊 Giọng đọc & AI') + nl('caidat', '#/admin/caidat', 'key', 'Cài đặt') +
       '<span class="lb">Khác</span><a href="#/">' + ic('eye', 19) + 'Mở trang học sinh</a><a href="#" data-act="a-logout">' + ic('out', 19) + 'Đăng xuất' + (cur() ? ' (' + esc(cur().user) + ')' : '') + '</a></aside>' +
       '<main class="amain">' + staleWarn() + body + '</main></div>');
   }
@@ -427,7 +427,7 @@
       var vpHead = vpi ? '<div class="note note-mint" style="margin-bottom:10px">✅ <b>Giọng chính của cả trang: ' + esc(vpi.voice) + '</b> – đã tạo sẵn <b>' + vpi.n + '</b> câu, mọi máy (Windows, Mac, iPad, điện thoại) nghe y hệt nhau, không cần khoá, không tốn tiền. Các giọng bên dưới chỉ dùng cho câu mới chưa có sẵn.</div>' : '';
       if (!j.google) el.innerHTML = '<div class="note" style="margin-bottom:8px">Chưa có <code>GOOGLE_TTS_KEY</code> trên Vercel nên chỉ có giọng Gemini (chậm, ít lượt). Thêm khoá Google để có các giọng bé trai bên dưới.</div>';
       else el.innerHTML = '';
-      el.innerHTML = vpHead + el.innerHTML;
+      el.innerHTML = vpHead + '<p style="margin:0 0 10px"><button class="btn btn-sm" data-act="a-vptest">🩺 Kiểm tra giọng trên máy này</button> <span id="vp-test" class="small"></span></p>' + el.innerHTML;
       el.innerHTML += '<div class="tblw"><table class="tbl"><tbody>' + (j.presets || []).map(function (p) {
         var on = p.id === curV;
         return '<tr' + (on ? ' style="background:var(--mint-lt,#E6FAF3)"' : '') + '><td><b>' + esc(p.name) + '</b>' + (on ? ' <span class="pill" style="color:var(--mint-dk)">✓ đang dùng</span>' : '') + '</td><td style="white-space:nowrap"><button class="btn btn-sm" data-act="a-vplay" data-v="' + esc(p.id) + '">▶ Nghe</button> ' + (on ? '' : '<button class="btn btn-sm btn-pink" data-act="a-vuse" data-v="' + esc(p.id) + '">Dùng giọng này</button>') + '</td></tr>';
@@ -943,6 +943,10 @@
       var mp = LN.cloud && LN.cloud.mergeProg ? LN.cloud.mergeProg(LN.progOf(tu), LN.progOf(fu)) : LN.progOf(fu);
       mp.updated = Date.now(); LN.saveProgOf(tu, mp); toast('Đã gộp tiến độ vào ' + tu); viewData();
     }
+    else if (a === 'a-vptest') {
+      var vt = document.getElementById('vp-test'); vt.textContent = '⏳ Đang kiểm tra…';
+      LN.vpSelfTest().then(function (r) { vt.innerHTML = (r.decode && /^OK/.test(r.decode) ? '<b style="color:var(--mint-dk)">✅ Giọng Fenrir chạy tốt trên máy này</b> (bạn sẽ nghe "Great job!")' : '<b style="color:var(--red-dk)">❌ Có lỗi – chụp màn hình gửi kỹ thuật</b>') + '<br><code style="font-size:12px;white-space:pre-wrap">' + esc(JSON.stringify(r)) + '</code>'; });
+    }
     else if (a === 'a-vplay') {
       var vv = t.getAttribute('data-v'); t.textContent = '⏳';
       var au = new Audio('api/tts?m=w&v=' + vv + '&t=' + encodeURIComponent(VSAMPLE));
@@ -1028,4 +1032,4 @@
   };
 })();
 ;
-(window.LN_V=window.LN_V||{})["admin.js"]="4ddeb480";
+(window.LN_V=window.LN_V||{})["admin.js"]="c71965e8";
