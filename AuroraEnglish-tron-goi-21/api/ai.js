@@ -4,11 +4,11 @@
 const P = require('../lib/ai_prompts.js');
 
 const HITS = new Map(); // giới hạn nhẹ theo IP (mỗi máy chủ ấm): 40 lượt / phút
-function limited(ip) {
+function limited(ip, max) {
   const now = Date.now(), w = HITS.get(ip) || [];
   const recent = w.filter((t) => now - t < 60000); recent.push(now); HITS.set(ip, recent);
   if (HITS.size > 5000) HITS.clear();
-  return recent.length > 40;
+  return recent.length > (max || 40);
 }
 function models() {
   const m = (process.env.GEMINI_MODEL || '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -25,9 +25,10 @@ module.exports = async (req, res) => {
   const origin = req.headers.origin || '', host = req.headers['x-forwarded-host'] || req.headers.host || '';
   if (origin && host && origin.replace(/^https?:\/\//, '') !== host) { res.status(403).json({ error: 'origin' }); return; }
   const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || 'x';
-  if (limited(ip)) { res.status(429).json({ error: 'Chíp đang bận, em đợi một chút rồi thử lại nhé.' }); return; }
   let b = req.body;
   if (typeof b === 'string') { try { b = JSON.parse(b); } catch (e) { b = null; } }
+  // chấm bài ôn luyện: cả lớp có thể nộp cùng lúc qua một mạng wifi → cho nhiều lượt hơn
+  if (b && b.task === 'olgrade' ? limited('ol:' + ip, 240) : limited(ip)) { res.status(429).json({ error: 'Chíp đang bận, em đợi một chút rồi thử lại nhé.' }); return; }
   if (!b || P.tasks.indexOf(b.task) < 0) { res.status(400).json({ error: 'task' }); return; }
   if (b.audio && (typeof b.audio.data !== 'string' || b.audio.data.length > 2500000)) { res.status(413).json({ error: 'Đoạn ghi âm quá dài.' }); return; }
   try {

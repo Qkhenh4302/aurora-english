@@ -7,8 +7,8 @@ const TOK = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKE
 const P = 'ae:';
 const OWNER = 'quyenntnna', OWNER_DEF_HASH = '2f121mm50j6';
 // Khoá dữ liệu chung của lớp (giáo viên ghi), dữ liệu công khai cho học sinh đọc
-const SHARED = /^ln_(users|admin|teachers|class|att|fees|imports|grammar|grammar_del|grammar_v|classes|pay|charge|bank|exedit|ttsv|seed_done|seed_v|note_[a-z0-9_]{1,40}|cl_[a-z0-9_-]{1,40})$/;
-const PUBLIC = ['ln_imports', 'ln_grammar', 'ln_grammar_del', 'ln_grammar_v', 'ln_exedit', 'ln_ttsv'];
+const SHARED = /^ln_(users|admin|teachers|class|att|fees|imports|grammar|grammar_del|grammar_v|classes|pay|charge|bank|exedit|ttsv|seed_done|seed_v|note_[a-z0-9_]{1,40}|cl_[a-z0-9_-]{1,40}|ol|olm|olt_[a-z0-9_-]{1,40})$/;
+const PUBLIC = ['ln_imports', 'ln_grammar', 'ln_grammar_del', 'ln_grammar_v', 'ln_exedit', 'ln_ttsv', 'ln_ol'];
 
 /* Gộp 3 chiều: base = bản máy đã lấy về lần trước, local = bản máy gửi lên, remote = bản đang có trên mạng.
    Hai máy sửa chỗ khác nhau thì giữ cả hai; cùng sửa một chỗ thì bản mới gửi lên thắng.
@@ -120,6 +120,30 @@ const OPS = {
     const kl = J(vals[PUBLIC.length], null); out.ln_class = kl ? { allowReg: !!kl.allowReg, name: kl.name || '' } : null;
     return [200, out];
   },
+  // Đề ôn luyện: học sinh tải nội dung một đề đã giao (đề nháp không cho tải)
+  async olget(b) {
+    const id = String(b.id || ''); if (!/^[a-z0-9_-]{1,40}$/.test(id)) return [400, { error: 'id' }];
+    const [ix, t] = await redis([['GET', P + 'k:ln_ol'], ['GET', P + 'k:ln_olt_' + id]]);
+    const meta = ((J(ix, {}) || {}).tests || {})[id];
+    if (!meta || meta.status !== 'giao' || meta.del) return [404, { error: 'notfound' }];
+    return [200, { test: J(t, null) }];
+  },
+  // Học sinh xem điểm cô chấm lại (chỉ bài của chính mình)
+  async olmarks(b) {
+    const s = await session(b.token); if (!s || s.role !== 'student') return [401, { error: 'session' }];
+    const [m] = await redis([['GET', P + 'k:ln_olm']]); const all = J(m, {}) || {}, out = {};
+    Object.keys(all).forEach((id) => { if (all[id] && all[id][s.u]) out[id] = all[id][s.u]; });
+    return [200, { marks: out }];
+  },
+  // Cô tải hình của đề lên (lưu riêng, không nằm trong nội dung đề)
+  async aolimg(b) {
+    const s = await session(b.token); if (!s || s.role === 'student') return [401, { error: 'session' }];
+    const d = String(b.data || ''); const m = /^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+\/=]+)$/.exec(d);
+    if (!m || d.length > 880000) return [400, { error: 'image' }];
+    const h = crypto.createHash('sha1').update(d).digest('hex');
+    await redis([['SET', P + 'oli:' + h, d]]);
+    return [200, { h }];
+  },
   async me(b) {
     const s = await session(b.token); if (!s || s.role !== 'student') return [401, { error: 'session' }];
     const [us, pv] = await redis([['GET', P + 'k:ln_users'], ['GET', P + 'p:' + s.u]]); const rec = (J(us, {}) || {})[s.u];
@@ -208,7 +232,15 @@ const OPS = {
 
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  if (req.method === 'GET') { res.status(200).json({ ok: !!(URL_ && TOK) }); return; }
+  if (req.method === 'GET') {
+    const q = req.query || Object.fromEntries(new URL(req.url || '/', 'http://x').searchParams);
+    if (q.olimg && /^[a-f0-9]{40}$/.test(q.olimg) && URL_ && TOK) {   // hình của đề ôn luyện
+      const [d] = await redis([['GET', P + 'oli:' + q.olimg]]); const m = /^data:(image\/[a-z]+);base64,(.*)$/.exec(d || '');
+      if (!m) { res.status(404).json({ error: 'notfound' }); return; }
+      res.setHeader('Content-Type', m[1]); res.setHeader('Cache-Control', 'public, max-age=31536000, immutable'); res.statusCode = 200; res.end(Buffer.from(m[2], 'base64')); return;
+    }
+    res.status(200).json({ ok: !!(URL_ && TOK) }); return;
+  }
   if (req.method !== 'POST') { res.status(405).json({ error: 'method' }); return; }
   if (!URL_ || !TOK) { res.status(503).json({ error: 'nostore' }); return; }
   const origin = req.headers.origin || '', host = req.headers['x-forwarded-host'] || req.headers.host || '';

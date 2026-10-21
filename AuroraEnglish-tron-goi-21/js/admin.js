@@ -81,7 +81,7 @@
     if (/^(grammar|ai|data|account|roster)$/.test(active)) active = 'caidat';
     function nl(id, href, icon, label) { return '<a href="' + href + '" class="' + (active === id ? 'on' : '') + '">' + ic(icon, 19) + label + '</a>'; }
     LN.render('<div class="adm"><aside class="aside"><a class="brand" href="#/admin">' + LN.logo(36) + '<span class="bname">Aurora <b>English</b></span></a>' +
-      '<span class="aver">Bản cập nhật 36 · 21/10</span><span class="lb">Quản lý</span>' + nl('lop', '#/admin', 'users', 'Lớp học') + nl('hocphi', '#/admin/hocphi', 'money', 'Học phí') + nl('home', '#/admin/tiendo', 'chart', 'Tiến độ học app') + nl('baitap', '#/admin/baitap', 'book', 'Làm bài & sửa bài') + nl('ai', '#/admin/ai', 'sound', '🔊 Giọng đọc & AI') + nl('caidat', '#/admin/caidat', 'key', 'Cài đặt') +
+      '<span class="aver">Bản cập nhật 37 · 21/10</span><span class="lb">Quản lý</span>' + nl('lop', '#/admin', 'users', 'Lớp học') + nl('hocphi', '#/admin/hocphi', 'money', 'Học phí') + nl('home', '#/admin/tiendo', 'chart', 'Tiến độ học app') + nl('baitap', '#/admin/baitap', 'book', 'Làm bài & sửa bài') + nl('onluyen', '#/admin/onluyen', 'book', '📝 Ôn luyện đề') + nl('ai', '#/admin/ai', 'sound', '🔊 Giọng đọc & AI') + nl('caidat', '#/admin/caidat', 'key', 'Cài đặt') +
       '<span class="lb">Khác</span><a href="#/">' + ic('eye', 19) + 'Mở trang học sinh</a><a href="#" data-act="a-logout">' + ic('out', 19) + 'Đăng xuất' + (cur() ? ' (' + esc(cur().user) + ')' : '') + '</a></aside>' +
       '<main class="amain">' + staleWarn() + body + '</main></div>');
   }
@@ -853,6 +853,7 @@
       case 'students': viewRoster(); break;
       case 'tiendo': viewOverview(); break;
       case 'baitap': LN.lop.viewBaiTap(); break;
+      case 'onluyen': LN.olAdmin(parts.slice(1)); break;
       case 'caidat': LN.lop.viewSettings(); break;
       case 'attendance': case 'lich': case 'lop': if (p1 && parts[0] === 'lop') LN.lop.viewClass(p1, parts[2]); else LN.lop.viewHome(); break;
       case 'fees': case 'hocphi': LN.lop.viewHocPhi(p1); break;
@@ -1034,4 +1035,4 @@
   };
 })();
 ;
-(window.LN_V=window.LN_V||{})["admin.js"]="25d630c3";
+(window.LN_V=window.LN_V||{})["admin.js"]="e9e70baa";

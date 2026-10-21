@@ -5,7 +5,7 @@
 (function () {
   var LN = window.LN, store = LN.store;
   var C = LN.cloud = { on: false, checked: false, boardList: null, state: 'idle' };
-  var SHARED = /^ln_(users|admin|teachers|class|att|fees|imports|grammar|grammar_del|grammar_v|classes|pay|charge|bank|exedit|ttsv|seed_done|seed_v|note_[a-z0-9_]{1,40}|cl_[a-z0-9_-]{1,40})$/, PROG = /^ln_prog_([a-z0-9_]{1,40})$/;
+  var SHARED = /^ln_(users|admin|teachers|class|att|fees|imports|grammar|grammar_del|grammar_v|classes|pay|charge|bank|exedit|ttsv|seed_done|seed_v|note_[a-z0-9_]{1,40}|cl_[a-z0-9_-]{1,40}|ol|olm|olt_[a-z0-9_-]{1,40})$/, PROG = /^ln_prog_([a-z0-9_]{1,40})$/;
   var raw = { set: store.set, del: store.del }, QUIET = 0;
   function quiet(fn) { QUIET++; try { fn(); } finally { QUIET--; } }
   function same(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
@@ -223,7 +223,7 @@
       wrapAdmin();
       var jobs = [api('public').then(function (pub) {
         quiet(function () {
-          ['ln_imports', 'ln_grammar', 'ln_grammar_del', 'ln_grammar_v', 'ln_exedit', 'ln_ttsv'].forEach(function (k) { if (pub[k] != null && !admTok()) raw.set.call(store, k, pub[k]); });
+          ['ln_imports', 'ln_grammar', 'ln_grammar_del', 'ln_grammar_v', 'ln_exedit', 'ln_ttsv', 'ln_ol'].forEach(function (k) { if (pub[k] != null && !admTok()) raw.set.call(store, k, pub[k]); });
           if (pub.ln_class && !admTok()) raw.set.call(store, 'ln_class', Object.assign({}, store.get('ln_class', {}) || {}, pub.ln_class));
         });
       }, function () {})];
@@ -247,4 +247,4 @@
   }
 })();
 ;
-(window.LN_V=window.LN_V||{})["cloud.js"]="d127e17b";
+(window.LN_V=window.LN_V||{})["cloud.js"]="682076c7";

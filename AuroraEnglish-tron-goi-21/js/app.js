@@ -1111,7 +1111,7 @@
     function nl(id, href, icon, label, extra) { return '<a href="' + href + '" class="' + (active === id ? 'on' : '') + '">' + cic(icon, 26) + '<span>' + label + '</span>' + (extra || '') + '</a>'; }
     return gvBar() + '<header class="topbar"><div class="wrap"><a class="brand" href="#/home">' + logo(40) + BRAND + '</a>' +
       '<nav class="nav" aria-label="Chính">' + nl('home', '#/home', 'home', 'Trang chủ') + nl('learn', '#/learn', 'learn', 'Bài học') + nl('games', '#/games', 'games', 'Trò chơi') +
-      nl('grammar', '#/grammar', 'grammar', 'Ngữ pháp') + nl('mistakes', '#/mistakes', 'heal', 'Ôn câu sai', mc ? '<span class="cnt">' + mc + '</span>' : '') + nl('ai', '#/ai', 'ai', 'Hỏi Chíp') + '</nav>' +
+      nl('grammar', '#/grammar', 'grammar', 'Ngữ pháp') + nl('mistakes', '#/mistakes', 'heal', 'Ôn câu sai', mc ? '<span class="cnt">' + mc + '</span>' : '') + (LN.OL && LN.OL.hasAny() ? nl('ol', '#/ol', 'target', 'Ôn luyện đề') : '') + nl('ai', '#/ai', 'ai', 'Hỏi Chíp') + '</nav>' +
       '<div class="tr"><span class="pillstat ps-star" title="Sao đã thu thập">' + cic('star', 24) + '<b>' + p.stars + '</b></span><span class="pillstat ps-fire" title="Số ngày học liên tiếp">' + cic('fire', 24) + '<b>' + streak(p) + '</b></span>' +
       '<button class="ibtn sm' + (st.music ? ' on' : '') + '" data-act="music" aria-pressed="' + st.music + '" title="' + (st.music ? 'Tắt' : 'Bật') + ' nhạc nền">' + cic(st.music ? 'music' : 'musicoff', 24) + '</button>' +
       '<button class="ibtn sm' + (st.sound ? ' on' : '') + '" data-act="sound" aria-pressed="' + st.sound + '" title="' + (st.sound ? 'Tắt' : 'Bật') + ' âm thanh đúng/sai">' + cic(st.sound ? 'sound' : 'mute', 24) + '</button>' +
@@ -2228,6 +2228,7 @@
       case 'mistakes': viewMistakes(); break;
       case 'account': viewAccount(); break;
       case 'ai': if (LN.viewAI) LN.viewAI(); else go('#/home'); break;
+      case 'ol': if (!LN.OL) go('#/home'); else if (parts[1]) LN.OL.viewTest(parts[1], parts[2], parts[3]); else LN.OL.viewList(); break;
       default: go(u ? '#/home' : '#/');
     }
   }
@@ -2301,4 +2302,4 @@
   LN.boot = function () { route(); };
 })();
 ;
-(window.LN_V=window.LN_V||{})["app.js"]="f5d0fc59";
+(window.LN_V=window.LN_V||{})["app.js"]="b07d30b0";
