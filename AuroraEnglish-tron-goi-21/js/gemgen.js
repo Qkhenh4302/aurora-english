@@ -130,10 +130,10 @@
     try { var now = new Date(), la = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })), off = now - la, next = new Date(la); next.setHours(24, 0, 0, 0); var t = new Date(next.getTime() + off), vn = new Date(t.toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' })); return ('0' + vn.getHours()).slice(-2) + ':00' + (vn.getDate() !== new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' })).getDate() ? ' ngày mai' : ' hôm nay'); } catch (e) { return '14:00'; }
   }
   LN._gemReset = resetVN;
-  function perModel(m) { var o = {}; try { o = JSON.parse(localStorage.getItem('ln_gem_pm') || '{}'); } catch (e) {} if (o.d !== today()) o = { d: today(), c: {} }; if (m) { o.c[m] = (o.c[m] || 0) + 1; try { localStorage.setItem('ln_gem_pm', JSON.stringify(o)); } catch (e) {} } return o.c; }
-  function reqToday(add) { var o = {}; try { o = JSON.parse(localStorage.getItem('ln_gem_req') || '{}'); } catch (e) {} if (o.d !== today()) o = { d: today(), n: 0 }; if (add) { o.n += add; try { localStorage.setItem('ln_gem_req', JSON.stringify(o)); } catch (e) {} } return o.n; }
-  function exhausted() { var e = store.get('ln_note_gemq', null) || {}; return e.d === today() ? e.m || {} : {}; }
-  function markExhausted(m, lim) { var e = { d: today(), m: exhausted() }; e.m[m] = lim || 1; store.set('ln_note_gemq', e); }
+  function perModel(m) { var o = {}; try { o = JSON.parse(localStorage.getItem('ln_gem_pm2') || '{}'); } catch (e) {} if (o.d !== today()) o = { d: today(), c: {} }; if (m) { o.c[m] = (o.c[m] || 0) + 1; try { localStorage.setItem('ln_gem_pm2', JSON.stringify(o)); } catch (e) {} } return o.c; }
+  function reqToday(add) { var o = {}; try { o = JSON.parse(localStorage.getItem('ln_gem_req2') || '{}'); } catch (e) {} if (o.d !== today()) o = { d: today(), n: 0 }; if (add) { o.n += add; try { localStorage.setItem('ln_gem_req2', JSON.stringify(o)); } catch (e) {} } return o.n; }
+  function exhausted() { var e = store.get('ln_note_gemq2', null) || {}; return e.d === today() ? e.m || {} : {}; }
+  function markExhausted(m, lim) { var e = { d: today(), m: exhausted() }; e.m[m] = lim || 1; store.set('ln_note_gemq2', e); }
   function liveModels() { var ex = exhausted(), bad = G.badModel || {}; return MODELS.filter(function (m) { return !ex[m] && !bad[m]; }); }
   function pickModel() { var L = liveModels(); if (!L.length) return null; RR = (RR + 1) % L.length; return L[RR]; }   // xoay vòng các mẫu còn lượt
   function callBatch(items, voice) {
@@ -383,7 +383,7 @@
       '<p style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><button class="btn btn-lg btn-pink" id="gm-start" data-act="gm-start">🎙 Thu giọng Puck</button><button class="btn" data-act="gm-stop">⏸ Dừng</button><button class="btn btn-mint" data-act="gm-pub">⬆ Đưa lên app ngay</button>' +
       '<label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="gm-auto"' + (auto ? ' checked' : '') + '> Tự đưa lên app khi dừng</label></p>' +
       '<div id="gm-st" class="small"></div><div id="gm-gh" class="small"></div>' +
-      '<p class="small" style="margin-top:10px"><a href="#" data-act="gm-sample">▶ Nghe thử 6 câu</a> · <a href="#" data-act="gm-listen">🔊 Nghe 5 câu vừa thu</a> · <a href="#" data-act="gm-compare">🎧 So sánh giọng các mẫu</a> · <a href="#" data-act="gm-one">🎯 Chỉ giữ 1 mẫu</a> · <a href="#" data-act="gm-export">⬇ Tải file zip (dự phòng)</a></p></div>';
+      '<p class="small" style="margin-top:10px"><a href="#" data-act="gm-retry">↻ Gọi lại Google (bỏ đánh dấu hết lượt)</a> · <a href="#" data-act="gm-sample">▶ Nghe thử 6 câu</a> · <a href="#" data-act="gm-listen">🔊 Nghe 5 câu vừa thu</a> · <a href="#" data-act="gm-compare">🎧 So sánh giọng các mẫu</a> · <a href="#" data-act="gm-one">🎯 Chỉ giữ 1 mẫu</a> · <a href="#" data-act="gm-export">⬇ Tải file zip (dự phòng)</a></p></div>';
   };
   /* Các câu thu trước bản 36 (không có q:2) đều bị câm do lỗi đổi tần số của lamejs → xoá để thu lại */
   function purgeOld() {
@@ -397,7 +397,7 @@
     ghCheck(); draw();
   };
   LN.gemClick = function (a, ev) {
-    if (ev && ev.preventDefault && /gm-(sample|listen|export|compare|one)/.test(a)) ev.preventDefault();
+    if (ev && ev.preventDefault && /gm-(sample|listen|export|compare|one|retry)/.test(a)) ev.preventDefault();
     if (a === 'gm-start') start();
     else if (a === 'gm-stop') { G.stop = true; G.msg = 'Đang dừng sau lượt hiện tại…'; draw(); }
     else if (a === 'gm-sample') libs().then(sample);
@@ -406,9 +406,10 @@
     else if (a === 'gm-pub') publish();
     else if (a === 'gm-compare') libs().then(compare);
     else if (a === 'gm-one') keepOne();
+    else if (a === 'gm-retry') { store.set('ln_note_gemq2', null); G.badModel = {}; G.msg = 'Đã bỏ đánh dấu hết lượt, đang gọi lại Google…'; draw(); start(); }
     else return false;
     return true;
   };
 })();
 ;
-(window.LN_V=window.LN_V||{})["gemgen.js"]="98fb8780";
+(window.LN_V=window.LN_V||{})["gemgen.js"]="516f71c1";
