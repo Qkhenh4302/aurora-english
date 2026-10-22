@@ -124,15 +124,20 @@
   }
 
   /* ---------- gọi máy chủ ---------- */
-  function today() { return new Date().toISOString().slice(0, 10); }
+  /* Google làm mới lượt Gemini lúc 0:00 giờ California (= 14:00 hoặc 15:00 giờ Việt Nam), không phải nửa đêm VN */
+  function today() { try { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); } catch (e) { return new Date(Date.now() - 8 * 3600000).toISOString().slice(0, 10); } }
+  function resetVN() {   // giờ VN Google làm mới lượt tiếp theo
+    try { var now = new Date(), la = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })), off = now - la, next = new Date(la); next.setHours(24, 0, 0, 0); var t = new Date(next.getTime() + off), vn = new Date(t.toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' })); return ('0' + vn.getHours()).slice(-2) + ':00' + (vn.getDate() !== new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' })).getDate() ? ' ngày mai' : ' hôm nay'); } catch (e) { return '14:00'; }
+  }
+  LN._gemReset = resetVN;
   function perModel(m) { var o = {}; try { o = JSON.parse(localStorage.getItem('ln_gem_pm') || '{}'); } catch (e) {} if (o.d !== today()) o = { d: today(), c: {} }; if (m) { o.c[m] = (o.c[m] || 0) + 1; try { localStorage.setItem('ln_gem_pm', JSON.stringify(o)); } catch (e) {} } return o.c; }
   function reqToday(add) { var o = {}; try { o = JSON.parse(localStorage.getItem('ln_gem_req') || '{}'); } catch (e) {} if (o.d !== today()) o = { d: today(), n: 0 }; if (add) { o.n += add; try { localStorage.setItem('ln_gem_req', JSON.stringify(o)); } catch (e) {} } return o.n; }
   function exhausted() { var e = store.get('ln_note_gemq', null) || {}; return e.d === today() ? e.m || {} : {}; }
-  function markExhausted(m) { var e = { d: today(), m: exhausted() }; e.m[m] = 1; store.set('ln_note_gemq', e); }
+  function markExhausted(m, lim) { var e = { d: today(), m: exhausted() }; e.m[m] = lim || 1; store.set('ln_note_gemq', e); }
   function liveModels() { var ex = exhausted(), bad = G.badModel || {}; return MODELS.filter(function (m) { return !ex[m] && !bad[m]; }); }
   function pickModel() { var L = liveModels(); if (!L.length) return null; RR = (RR + 1) % L.length; return L[RR]; }   // xoay vòng các mẫu còn lượt
   function callBatch(items, voice) {
-    var model = pickModel(); if (!model) return Promise.reject({ stop: 'Hôm nay đã dùng hết lượt của Gemini. Ngày mai mở trang này và bấm «Tiếp tục».' });
+    var model = pickModel(); if (!model) return Promise.reject({ stop: 'Đã dùng hết lượt Gemini của Google trong ngày. Google làm mới lượt lúc ' + resetVN() + ' (giờ Việt Nam) – sau giờ đó mở trang này và bấm «Thu tiếp giọng Puck».' });
     G.model = model; G.req++; reqToday(1); perModel(model);
     var lines = items.map(function (x) { return x.t; }), mode = items[0].m;
     var prompt = BSTYLE[mode] + '\n\nRead the ' + lines.length + ' lines below for an English lesson. Read every line exactly as written, in order, exactly once. Do not read line numbers, do not add or skip any words. ' +
@@ -150,7 +155,7 @@
         d = String(d || '');
         if (r.status === 401 || r.status === 403) throw { stop: 'Google từ chối khoá Gemini (' + r.status + '): ' + d.slice(0, 200) };
         if (r.status === 429) {
-          if (/per.?day|PerDay|daily|RequestsPerDay/i.test(d)) { markExhausted(model); return callBatch(items, voice); }
+          if (/per.?day|PerDay|daily|RequestsPerDay/i.test(d)) { var lm = /limit:\s*(\d+)/i.exec(d); markExhausted(model, lm ? +lm[1] : 1); return callBatch(items, voice); }
           throw { wait: 65000, msg: 'Gemini đang giới hạn số lượt mỗi phút – chờ 1 phút rồi chạy tiếp…' };
         }
         if (r.status === 404 || (r.status === 400 && /model|not found|not supported/i.test(d))) { G.badModel = G.badModel || {}; G.badModel[model] = 1; return callBatch(items, voice); }
@@ -363,8 +368,8 @@
     var el = document.getElementById('gm-st'); if (!el) return;
     var pct = G.total ? Math.floor(G.done * 100 / G.total) : 0, used = reqToday(0);
     el.innerHTML = (G.total ? '<div class="tk-bar" style="height:12px;margin:8px 0"><i style="width:' + pct + '%"></i></div><b style="font-size:16px">Đã thu ' + G.done + ' / ' + G.total + ' câu (' + pct + '%)</b>' : '<b>Đã thu ' + G.done + ' câu</b>') +
-      ' · hôm nay đã dùng <b>' + used + '</b> lượt Gemini' + (G.err ? ' · thử lại: ' + G.err : '') +
-      (function () { var pm = perModel(), ex = exhausted(), bad = G.badModel || {}; var ks = Object.keys(pm); return ks.length ? '<div class="tiny muted" style="margin-top:4px">' + ks.map(function (m) { return esc(m.replace(/^gemini-/, '').replace(/-tts$/, '')) + ': ' + pm[m] + (ex[m] ? ' (hết lượt hôm nay)' : bad[m] ? ' (không dùng được)' : ''); }).join(' · ') + '</div>' : ''; })() +
+      ' · từ lúc Google làm mới lượt đã dùng <b>' + used + '</b> lượt (lượt mới lúc ' + resetVN() + ')' + (G.err ? ' · thử lại: ' + G.err : '') +
+      (function () { var pm = perModel(), ex = exhausted(), bad = G.badModel || {}; var ks = Object.keys(pm); return ks.length ? '<div class="tiny muted" style="margin-top:4px">' + ks.map(function (m) { return esc(m.replace(/^gemini-/, '').replace(/-tts$/, '')) + ': ' + pm[m] + (ex[m] ? ' (hết lượt' + (ex[m] > 1 ? ', Google cho ' + ex[m] + ' lượt/ngày' : '') + ')' : bad[m] ? ' (không dùng được)' : ''); }).join(' · ') + '</div>' : ''; })() +
       '<div style="margin-top:6px">' + esc(G.msg) + '</div>' + (G.pub ? '<div style="margin-top:6px">' + esc(G.pub) + '</div>' : '');
     var b1 = document.getElementById('gm-start'); if (b1) { b1.disabled = G.run; b1.textContent = G.run ? '🎙 Đang thu…' : (G.done ? '🎙 Thu tiếp giọng Puck' : '🎙 Bắt đầu thu giọng Puck'); }
     var gb = document.getElementById('gm-gh');
@@ -406,4 +411,4 @@
   };
 })();
 ;
-(window.LN_V=window.LN_V||{})["gemgen.js"]="27e9d305";
+(window.LN_V=window.LN_V||{})["gemgen.js"]="98fb8780";
