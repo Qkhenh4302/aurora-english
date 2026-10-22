@@ -100,7 +100,41 @@
     if (bad) return null;
     return segs.map(function (sg) { var a = Math.max(0, sg[0] * fr - Math.round(rate * 0.05)), b = Math.min(pcm.length, sg[1] * fr + Math.round(rate * 0.12)); return pcm.subarray(a, b); });
   }
-  LN._gemSplit = split; LN._gemParseWav = parseWav;
+  /* Cắt dự phòng: Gemini thường không nghỉ đủ 2 giây giữa các câu. Chọn n-1 khoảng lặng sao cho độ dài từng đoạn
+     khớp nhất với độ dài chữ của từng câu (quy hoạch động), ưu tiên khoảng lặng dài; lệch nhiều thì bỏ (không gán sai câu). */
+  function split2(pcm, rate, lines) {
+    var n = lines.length; if (n < 2) return null;
+    var fr = Math.round(rate * 0.02), nf = Math.floor(pcm.length / fr), rms = new Float32Array(nf), i, j;
+    for (i = 0; i < nf; i++) { var s = 0; for (j = i * fr; j < (i + 1) * fr; j++) s += pcm[j] * pcm[j]; rms[i] = Math.sqrt(s / fr); }
+    var voiced = [].slice.call(rms).filter(function (x) { return x > 300; }).sort(function (a, b) { return a - b; });
+    var thr = Math.max(180, (voiced.length ? voiced[Math.floor(voiced.length / 2)] : 1000) * 0.06);
+    var first = 0, last = nf - 1; while (first < nf && rms[first] < thr) first++; while (last > 0 && rms[last] < thr) last--;
+    if (first >= last) return null;
+    var G = [], st = -1;
+    for (i = first; i <= last; i++) { if (rms[i] < thr) { if (st < 0) st = i; } else if (st >= 0) { if (i - st >= 8) G.push([st, i, i - st]); st = -1; } }   // khoảng lặng ≥ 0,16 giây
+    var m = G.length; if (m < n - 1) return null;
+    var W = lines.map(function (t) { return String(t).length + 6; }), Wt = W.reduce(function (a, b) { return a + b; }, 0);
+    var gapTot = 0; G.forEach(function (g) { gapTot += g[2]; });
+    var speech = (last + 1 - first) - gapTot * 0.6, unit = Math.max(1, speech) / Wt;
+    var BIG = 1e9, C = [], P = [], k, a, b;
+    function cost(seg, wk) { var r = Math.max(1, seg) / (wk * unit); var l = Math.log(r); return l * l; }
+    function bonus(g) { return -0.35 * Math.log(Math.min(g[2], 100) / 8); }   // khoảng lặng càng dài càng giống chỗ hết câu
+    for (k = 0; k < n - 1; k++) { C.push(new Float64Array(m).fill(BIG)); P.push(new Int32Array(m).fill(-1)); }
+    for (b = 0; b < m; b++) C[0][b] = cost(G[b][0] - first, W[0]) + bonus(G[b]);
+    for (k = 1; k < n - 1; k++) for (b = k; b < m; b++) { var best = BIG, arg = -1; for (a = k - 1; a < b; a++) { if (C[k - 1][a] >= BIG) continue; var c = C[k - 1][a] + cost(G[b][0] - G[a][1], W[k]); if (c < best) { best = c; arg = a; } } if (arg >= 0) { C[k][b] = best + bonus(G[b]); P[k][b] = arg; } }
+    var bestE = BIG, bi = -1; for (b = n - 2; b < m; b++) { if (C[n - 2][b] >= BIG) continue; var ce = C[n - 2][b] + cost(last + 1 - G[b][1], W[n - 1]); if (ce < bestE) { bestE = ce; bi = b; } }
+    if (bi < 0) return null;
+    var cuts = []; for (k = n - 2, b = bi; k >= 0; k--) { cuts.unshift(G[b]); b = P[k][b]; }
+    var segs = [], a0 = first; cuts.forEach(function (g) { segs.push([a0, g[0]]); a0 = g[1]; }); segs.push([a0, last + 1]);
+    // kiểm tra: mỗi đoạn không lệch quá 2,2 lần so với độ dài chữ; khoảng cắt nhỏ nhất không được ngắn hơn hẳn khoảng không cắt dài nhất
+    var bad = segs.some(function (sg, q) { var r = (sg[1] - sg[0]) / (W[q] * unit); return sg[1] - sg[0] < 8 || r > 3.2 || r < 1 / 3.2; });   // nới vì sau đó còn bước nghe kiểm tra
+    if (bad) return null;
+    var used = {}; cuts.forEach(function (g) { used[g[0]] = 1; });
+    var minCut = Math.min.apply(null, cuts.map(function (g) { return g[2]; })), maxRest = Math.max.apply(null, G.filter(function (g) { return !used[g[0]]; }).map(function (g) { return g[2]; }).concat([0]));
+    if (maxRest > minCut * 3) return null;
+    return segs.map(function (sg) { var x = Math.max(0, sg[0] * fr - Math.round(rate * 0.05)), y = Math.min(pcm.length, sg[1] * fr + Math.round(rate * 0.12)); return pcm.subarray(x, y); });
+  }
+  LN._gemSplit = split; LN._gemSplit2 = split2; LN._gemParseWav = parseWav;
   /* Kiểm tra file mp3 vừa tạo có tiếng thật (giải mã lại và đo âm lượng lớn nhất 0..1) */
   function loud(b) {
     var C = window.OfflineAudioContext || window.webkitOfflineAudioContext; if (!C) return Promise.resolve(1);
@@ -163,9 +197,59 @@
       });
     });
   }
+  /* ---------- nghe kiểm tra (chỉ khi phải dùng bộ cắt dự phòng) ----------
+     Ghép các đoạn đã cắt, xen 1,3 giây im lặng, nhờ Gemini bản đọc chữ (lượt riêng, không tính vào lượt giọng) nghe và ghi lại từng đoạn.
+     Đoạn nào nghe ra đúng câu mới lưu – tránh gán nhầm câu. */
+  var TXT = null;
+  function textModels(key) {
+    if (TXT) return Promise.resolve(TXT);
+    var base = LN._gemBase || 'https://generativelanguage.googleapis.com';
+    return fetch(base + '/v1beta/models?pageSize=1000', { headers: { 'x-goog-api-key': key } }).then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) { var L = j && j.models && window.AIPROMPTS ? window.AIPROMPTS.rankModels(j.models) : []; TXT = L.length ? L.slice(0, 4) : ['gemini-3-flash-preview', 'gemini-2.5-flash']; return TXT; }, function () { TXT = ['gemini-3-flash-preview', 'gemini-2.5-flash']; return TXT; });
+  }
+  function simText(a, b) {
+    function nz(x) { return String(x || '').toLowerCase().replace(/[‘’ʼ`]/g, "'").replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim(); }
+    a = nz(a); b = nz(b); if (!a || !b) return 0; if (a === b) return 1;
+    var m = a.length, n = b.length, prev = [], cur = [], i, j; for (j = 0; j <= n; j++) prev[j] = j;
+    for (i = 1; i <= m; i++) { cur = [i]; for (j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1)); prev = cur; }
+    return 1 - prev[n] / Math.max(m, n);
+  }
+  LN._gemSim = simText;
+  function verify(segs, rate, lines) {
+    var gap = new Int16Array(Math.round(rate * 1.3)), tot = segs.reduce(function (s, x) { return s + x.length + gap.length; }, gap.length), all = new Int16Array(tot), o = gap.length;
+    segs.forEach(function (x) { all.set(x, o); o += x.length + gap.length; });
+    var b = mp3(all, rate);
+    return Promise.all([apiKey(), new Promise(function (ok) { var fr = new FileReader(); fr.onload = function () { ok(String(fr.result).split(',')[1]); }; fr.readAsDataURL(new Blob([b])); })]).then(function (r) {
+      var key = r[0], data = r[1];
+      return textModels(key).then(function (L) {
+        var i = 0, base = LN._gemBase || 'https://generativelanguage.googleapis.com';
+        var prompt = 'OL_VERIFY. The audio contains exactly ' + segs.length + ' short English utterances (single words, phrases or sentences) separated by about one second of silence. ' +
+          'Transcribe EACH utterance exactly as spoken, in order. Do not guess or correct; if an utterance is unclear write your best hearing. Return JSON {"t": [exactly ' + segs.length + ' strings]}.';
+        function next() {
+          if (i >= L.length) return null;
+          var model = L[i++], body = { contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: 'audio/mp3', data: data } }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0, maxOutputTokens: 6000 } };
+          if (/2\.5/.test(model)) body.generationConfig.thinkingConfig = { thinkingBudget: 0 };
+          return fetch(base + '/v1beta/models/' + model + ':generateContent', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(body) })
+            .then(function (res) { if (!res.ok) return next(); return res.json().then(function (j) {
+              var t = ((((j.candidates || [])[0] || {}).content || {}).parts || []).map(function (x) { return x.thought ? '' : x.text || ''; }).join('');
+              var o2 = null; try { o2 = JSON.parse(t.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '')); } catch (e) {}
+              var arr = o2 && Array.isArray(o2.t) ? o2.t : null;
+              if (!arr || arr.length !== segs.length) return null;   // đếm không khớp: không chắc → không lưu
+              return lines.map(function (ln, k) { var sc = simText(ln, arr[k]); return sc >= (String(ln).length <= 6 ? 0.5 : 0.62); });
+            }); }, function () { return next(); });
+        }
+        return next();
+      });
+    }).catch(function () { return null; });
+  }
   function doBatch(items, voice, depth) {
     return callBatch(items, voice).then(function (w) {
-      var segs = split(w.pcm, w.rate, items.map(function (x) { return x.t; }));
+      var tl = items.map(function (x) { return x.t; }), segs = split(w.pcm, w.rate, tl), fb = false, checked = Promise.resolve(null);
+      if (!segs && items.length > 1) { segs = split2(w.pcm, w.rate, tl); if (segs) { fb = true; G.v2 = (G.v2 || 0) + 1; checked = verify(segs, w.rate, tl); } }
+      return checked.then(function (good) {
+      var ST = LN._gemStat = LN._gemStat || { strict: 0, fb: 0, fbFail: 0, vnull: 0, vok: 0, vbad: 0, half: 0 }; if (segs && !fb) ST.strict++; if (fb) { ST.fb++; if (!good) ST.vnull++; else { ST.vok += good.filter(Boolean).length; ST.vbad += good.filter(function (x) { return !x; }).length; } } else if (!segs && items.length > 1) ST.fbFail++;
+      if (fb && !good) segs = null;                                                    // cắt dự phòng mà không nghe kiểm tra được: không tin
+      if (fb && good && good.filter(Boolean).length < Math.ceil(segs.length / 2)) segs = null;   // lệch nhiều: coi như cắt hỏng
       if (!segs) {
         if (items.length === 1) throw { retry: true, msg: 'Không cắt được câu: ' + items[0].t.slice(0, 60) };
         var h = Math.ceil(items.length / 2);
@@ -173,6 +257,7 @@
       }
       var ok = 0;
       return Promise.all(segs.map(function (pcm, k) {
+        if (good && !good[k]) { G.failed[items[k].k] = items[k].t; G.vbad = (G.vbad || 0) + 1; return; }   // nghe ra không đúng câu: thu lại sau
         var pk = 0; for (var i = 0; i < pcm.length; i += 3) { var a = pcm[i] < 0 ? -pcm[i] : pcm[i]; if (a > pk) pk = a; }
         if (pk < 300) { G.failed[items[k].k] = items[k].t; return; }   // câu Gemini trả về gần như im lặng
         var b = mp3(pcm, w.rate);
@@ -181,6 +266,7 @@
           ok++; return put('clips', items[k].k, { b: b, m: w.model, q: 2 });
         });
       })).then(function () { G.done += ok; draw(); });
+      });
     }, function (e) {
       if (e && e.retry && (depth || 0) < 3) { G.err++; G.msg = e.msg; draw(); return new Promise(function (ok) { setTimeout(ok, 3000); }).then(function () { return doBatch(items, voice, (depth || 0) + 1); }); }
       if (e && e.retry) { items.forEach(function (x) { G.failed[x.k] = x.t; }); G.err++; G.msg = e.msg; draw(); return; }
@@ -211,7 +297,7 @@
           G.stop = true; queue.unshift(b); G.msg = (e && e.stop) || ('Dừng vì lỗi: ' + (e && e.message || e)); draw();
         });
       };
-      var ws = [], np = Math.min(6, Math.max(PAR, liveModels().length * 2)); for (var i = 0; i < np; i++) ws.push(worker());
+      var ws = [], np = LN._gemPar || Math.min(6, Math.max(PAR, liveModels().length * 2)); for (var i = 0; i < np; i++) ws.push(worker());
       return Promise.all(ws);
     }).then(function () {
       G.run = false;
@@ -412,4 +498,4 @@
   };
 })();
 ;
-(window.LN_V=window.LN_V||{})["gemgen.js"]="516f71c1";
+(window.LN_V=window.LN_V||{})["gemgen.js"]="809ba20e";
