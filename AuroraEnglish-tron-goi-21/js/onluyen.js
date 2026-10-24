@@ -81,6 +81,7 @@
       if (!p.ro) p.ro = 'Ex ' + (pi + 1);
       var nums = [];
       p.items.forEach(function (it) {
+        it._p = pi;
         if (it.t === 'q' || it.t === 'w') {
           k++;
           // mã câu cố định (không đổi khi cô thêm / bớt câu) để bài làm cũ vẫn khớp đúng câu
@@ -138,7 +139,7 @@
           : '<input id="i' + it.k + '" data-ol="in" data-k="' + it.k + '" type="text" autocomplete="off" spellcheck="false" placeholder="Gõ câu trả lời của em" value="' + esc(val) + '"' + (lock ? ' disabled' : '') + '>') + '</div>';
     }
     var cls = 'ol-q' + (s.checked ? (s.pend ? ' ol-wait' : s.pts >= 0.999 ? ' ol-ok' : ' ol-no') : '');
-    var act = mode === 'do' || mode === 'preview' ? '<div class="ol-act"><button type="button" class="ol-btn ol-chk" data-ol="chk" data-k="' + it.k + '"' + (s.checked || s.busy || !ready(it, s) ? ' disabled' : '') + '>' + (s.busy ? '<span class="ol-spin"></span>Đang chấm…' : s.checked ? 'Đã chấm' : 'Kiểm tra câu này') + '</button>' + tagHTML(s) + '</div>' : (mode === 'review' ? '<div class="ol-act">' + tagHTML(s) + (st.mark && st.mark[it.k] != null ? ' <span class="ol-pill">Cô chấm lại: ' + fmt(st.mark[it.k]) + ' điểm</span>' : '') + '</div>' : '');
+    var act = mode === 'do' || mode === 'preview' ? (s.busy ? '<div class="ol-act"><span class="ol-tag"><span class="ol-spin"></span>Đang chấm…</span></div>' : s.checked ? '<div class="ol-act">' + tagHTML(s) + '</div>' : '') : (mode === 'review' ? '<div class="ol-act">' + tagHTML(s) + (st.mark && st.mark[it.k] != null ? ' <span class="ol-pill">Cô chấm lại: ' + fmt(st.mark[it.k]) + ' điểm</span>' : '') + '</div>' : '');
     return '<div class="' + cls + '" id="q' + it.k + '"' + edAttr(it, mode0) + '><div class="ol-qn">' + esc(it.n) + '</div><div class="ol-qb">' + inner + act +
       '<div class="ol-fb" id="fb' + it.k + '"' + (s.checked || mode === 'key' ? '' : ' hidden') + '>' + (s.checked || mode === 'key' ? fbHTML(T, it, s, mode) : '') + '</div>' + (st.extra ? st.extra(it, s) : '') + '</div>' + pen(it, mode0) + '</div>';
   }
@@ -152,14 +153,14 @@
     return '<span class="ol-tag ol-no">✗ Chưa đúng</span>';
   }
   function fbHTML(T, it, s, mode) {
-    var th = it.th && T.theory[it.th], out = '';
+    var pth = T.parts[it._p] && T.parts[it._p].th && T.parts[it._p].th[0], th = (it.th && T.theory[it.th]) || (pth && T.theory[pth]), out = '';
     var theory = th ? ruleHTML(th, 'ol-th', 'Lí thuyết cần nhớ — ') : '';
     if (it.t === 'q') {
       out += '<span class="ol-k">Đáp án đúng</span><span class="ol-model"><b>' + LET[it.ans] + '. ' + esc(plain(it.opts[it.ans])) + '</b></span>';
       if (mode !== 'key' && s.pick != null && s.pick !== it.ans) {
         var wy = it.why && (it.why[s.pick] || it.why[String(s.pick)]);
         out += '<div class="ol-err"><b>Em chọn ' + LET[s.pick] + '. ' + esc(plain(it.opts[s.pick])) + ' — sai vì:</b> ' + (wy ? san(wy) : 'phương án này không hợp với câu hỏi; xem lời giải bên dưới.') + '</div>';
-      } else if (mode !== 'key' && s.pick == null && s.checked) out += '<div class="ol-err"><b>Em chưa chọn đáp án.</b></div>';
+      } else if (mode !== 'key' && s.pick == null && s.checked) out += '<div class="ol-err"><b>Em chưa chọn đáp án.</b> Đáp án đúng là ' + LET[it.ans] + ' – xem lời giải bên dưới.</div>';
       if (mode === 'key' && it.why) { var ws = Object.keys(it.why).filter(function (i) { return +i !== it.ans && it.why[i]; }); if (ws.length) out += '<div class="ol-why">' + ws.map(function (i) { return '<div><b>' + LET[+i] + ' sai:</b> ' + san(it.why[i]) + '</div>'; }).join('') + '</div>'; }
     } else {
       if (mode !== 'key') out += '<div class="ol-mine"><span class="ol-k">Em viết</span>' + (norm(s.a) ? esc(s.a) : '<i>(để trống)</i>') + '</div>';
@@ -181,7 +182,7 @@
   };
   OL.heroHTML = function (T, extra) {
     return '<header class="ol-hero"><span class="ol-blob ol-b1"></span><span class="ol-blob ol-b2"></span><div class="ol-eyebrow">' + esc(T.kicker || 'Ôn luyện') + '</div><h1>' + esc(T.title || 'Đề ôn luyện') + '</h1>' +
-      '<p>' + esc(T.desc || '') + (T.desc ? ' ' : '') + 'Làm xong câu nào, bấm <b>Kiểm tra câu này</b> là biết đúng sai ngay, kèm đáp án, lời giải và <b>lí thuyết cần nhớ</b>. Làm hết bài thì bấm <b>Nộp bài</b> để chốt điểm và gửi cô.</p>' +
+      '<p>' + esc(T.desc || '') + (T.desc ? ' ' : '') + 'Em làm hết bài rồi bấm <b>Nộp bài</b>. Nộp xong mới hiện <b>điểm, đáp án, lời giải</b>, lí do sai và <b>lí thuyết cần nhớ</b> của từng câu.</p>' +
       '<div class="ol-hero-chips">' + T.parts.map(function (p, pi) { return pi < 8 ? '<button type="button" class="ol-hchip" data-ol="jump" data-pi="' + pi + '">' + esc(plain(p.label)) + '</button>' : ''; }).join('') + '</div>' + (extra || '') + '</header>';
   };
   OL.navHTML = function (T, st) {
@@ -193,7 +194,7 @@
     return { done: done, right: right, filled: filled, pend: pend, total: T.total, pts: T.total ? right / T.total * 10 : 0 };
   }
   OL.tally = tally;
-  function tallyHTML(T, st) { var r = tally(T, st); return 'Đã chấm <b>' + r.done + '</b>/' + r.total + '<span class="ol-sc">Điểm <b>' + fmt(r.pts) + '</b></span>'; }
+  function tallyHTML(T, st) { var r = tally(T, st); if (!st.done && st.mode !== 'review') return 'Đã làm <b>' + r.filled + '</b>/' + r.total + ' câu'; return 'Đã chấm <b>' + r.done + '</b>/' + r.total + '<span class="ol-sc">Điểm <b>' + fmt(r.pts) + '</b></span>'; }
 
   /* ---------- chấm câu viết: khớp đáp án trước, không khớp thì hỏi AI (máy chủ /api/ai) ---------- */
   OL.gradeW = function (it, ans) {
@@ -212,8 +213,9 @@
   /* opt: { T, st, mode: 'do'|'preview'|'review'|'key', root: element, onSave(st), onSubmit(st, result), topHTML, extra } */
   OL.mount = function (opt) {
     OL.fonts();
-    var T = opt.T, st = opt.st, root = opt.root, mode = opt.mode, PR = {};
-    Object.keys(st.a || {}).forEach(function (k) { if (st.a[k]) st.a[k].busy = false; });
+    var T = opt.T, st = opt.st, root = opt.root, mode = opt.mode, PR = {}, SUBM = false;
+    Object.keys(st.a || {}).forEach(function (k) { var x = st.a[k]; if (!x) return; x.busy = false; if (!st.done && (mode === 'do' || mode === 'preview')) { x.checked = false; x.pts = 0; x.fix = ''; x.why = ''; x.pend = false; } });
+    st.mode = mode;
     function full() {
       root.innerHTML = '<div class="olx' + (mode === 'edit' ? ' ol-edit-on' : '') + '"><div class="ol-shell">' + OL.heroHTML(T) + (opt.topHTML || '') + OL.navHTML(T, st) +
         T.parts.map(function (p, pi) { return OL.partHTML(T, p, pi, st, mode); }).join('') + (mode === 'do' || mode === 'preview' ? submitHTML() : '') + (opt.bottomHTML || '') + '</div></div>';
@@ -221,15 +223,15 @@
       if (st.done) summary();
     }
     function submitHTML() {
-      return '<section class="ol-submit" id="ol-submit"><h2>Kết quả bài làm</h2><div class="ol-big"><b id="ol-score">' + fmt(tally(T, st).pts) + '</b><span id="ol-sub"></span></div><div class="ol-bd" id="ol-bd"></div><div class="ol-miss" id="ol-miss"></div>' +
+      return '<section class="ol-submit" id="ol-submit"><h2>Kết quả bài làm</h2><div class="ol-big"><b id="ol-score">' + (st.done ? fmt(tally(T, st).pts) : '?') + '</b><span id="ol-sub"></span></div><div class="ol-bd" id="ol-bd"></div><div class="ol-miss" id="ol-miss"></div>' +
         '<div class="ol-act"><button type="button" class="ol-btn ol-solid" data-ol="submit"' + (st.done ? ' disabled' : '') + '>' + (st.done ? 'Đã nộp bài' : 'Nộp bài') + '</button>' + (opt.afterBtns || '') + '<button type="button" class="ol-btn ol-ghost" data-ol="reset">Làm lại từ đầu</button>' +
-        '<button type="button" class="ol-btn ol-ghost" data-ol="sound">' + (sound ? '🔊 Âm thanh' : '🔇 Đã tắt tiếng') + '</button></div><p class="ol-hint" id="ol-note">' + (st.done ? '' : 'Làm hết ' + T.total + ' câu rồi bấm <b>Nộp bài</b> để xem tổng kết theo từng phần.') + '</p></section>';
+        '<button type="button" class="ol-btn ol-ghost" data-ol="sound">' + (sound ? '🔊 Âm thanh' : '🔇 Đã tắt tiếng') + '</button></div><p class="ol-hint" id="ol-note">' + (st.done ? '' : 'Làm hết ' + T.total + ' câu rồi bấm <b>Nộp bài</b>. Nộp xong mới hiện điểm, đáp án, lời giải và lí thuyết của từng câu.') + '</p></section>';
     }
     function refreshTop() {
       var r = tally(T, st), t = root.querySelector('#ol-tally'); if (t) t.innerHTML = tallyHTML(T, st);
       var sc = root.querySelector('#ol-score'), sb = root.querySelector('#ol-sub');
-      if (sc) sc.textContent = fmt(r.pts);
-      if (sb) sb.textContent = 'điểm · ' + fmt(r.right).replace(',0', '') + '/' + r.total + ' câu đúng · còn ' + (r.total - r.filled) + ' câu chưa làm' + (r.pend ? ' · ' + r.pend + ' câu chờ cô chấm' : '');
+      if (sc) sc.textContent = st.done ? fmt(r.pts) : '?';
+      if (sb) sb.textContent = st.done ? 'điểm · ' + fmt(r.right).replace(',0', '') + '/' + r.total + ' câu đúng' + (r.pend ? ' · ' + r.pend + ' câu chờ cô chấm' : '') : 'Đã làm ' + r.filled + '/' + r.total + ' câu – nộp bài xong mới hiện điểm';
     }
     function repaint(it) {
       var el = root.querySelector('#q' + it.k); if (!el) return;
@@ -238,10 +240,10 @@
     function byK(k) { var r = null; graded(T).some(function (it) { if (it.k === k) { r = it; return true; } return false; }); return r; }
     function check(it) {
       var s = S(st, it.k); if (s.checked || s.busy || !ready(it, s)) return Promise.resolve();
-      if (it.t === 'q') { s.checked = true; s.pts = s.pick === it.ans ? 1 : 0; (s.pts ? ding : buzz)(); save(); repaint(it); return Promise.resolve(); }
+      if (it.t === 'q') { s.checked = true; s.pts = s.pick === it.ans ? 1 : 0; if (!SUBM) (s.pts ? ding : buzz)(); save(); repaint(it); return Promise.resolve(); }
       s.busy = true; repaint(it);
       var ans = s.a;
-      return (PR[it.k] = OL.gradeW(it, ans).then(function (g) { delete PR[it.k]; s.a = ans; s.busy = false; s.checked = true; s.pts = g.pts; s.fix = g.fix || ''; s.why = g.why || ''; s.pend = !!g.pend; if (!g.pend) (s.pts >= 0.999 ? ding : buzz)(); save(); repaint(it); }));
+      return (PR[it.k] = OL.gradeW(it, ans).then(function (g) { delete PR[it.k]; s.a = ans; s.busy = false; s.checked = true; s.pts = g.pts; s.fix = g.fix || ''; s.why = g.why || ''; s.pend = !!g.pend; if (!g.pend && !SUBM) (s.pts >= 0.999 ? ding : buzz)(); save(); repaint(it); }));
     }
     function save() { if (!opt.onSave) return; var c = JSON.parse(JSON.stringify(st, function (k, v) { return k === 'extra' || k === 'mark' ? undefined : v; })); Object.keys(c.a || {}).forEach(function (k) { if (c.a[k]) c.a[k].busy = false; }); opt.onSave(c); }
     function summary() {
@@ -259,7 +261,9 @@
     }
     function submit() {
       if (st.done) return;
-      var b = root.querySelector('[data-ol=submit]'); if (b) { b.disabled = true; b.innerHTML = '<span class="ol-spin"></span>Đang chấm bài…'; }
+      var rr = tally(T, st); if (rr.filled < rr.total && !confirm('Em còn ' + (rr.total - rr.filled) + ' câu chưa làm. Vẫn nộp bài? (Nộp rồi không sửa được nữa)')) return;
+      if (rr.filled >= rr.total && !confirm('Nộp bài? Nộp rồi sẽ hiện điểm và đáp án, không sửa được nữa.')) return;
+      SUBM = true; var b = root.querySelector('[data-ol=submit]'); if (b) { b.disabled = true; b.innerHTML = '<span class="ol-spin"></span>Đang chấm bài…'; }
       var list = null, i = 0;
       function one() {
         if (i >= list.length) return Promise.resolve();
@@ -296,7 +300,7 @@
       var c = root.querySelector('#q' + k + ' [data-ol=chk]'); if (c) c.disabled = !ready(it, s);
       refreshTop();
     };
-    root.onkeydown = function (ev) { var t = ev.target; if (ev.key === 'Enter' && t.tagName === 'INPUT' && t.getAttribute('data-ol') === 'in') { ev.preventDefault(); var it = byK(t.getAttribute('data-k')); if (it) check(it); } };
+    root.onkeydown = function (ev) { var t = ev.target; if (ev.key === 'Enter' && t.tagName === 'INPUT' && t.getAttribute('data-ol') === 'in') { ev.preventDefault(); var ins = [].slice.call(root.querySelectorAll('[data-ol=in]:not([disabled])')), ix = ins.indexOf(t); if (ins[ix + 1]) ins[ix + 1].focus(); } };
     full(); refreshTop();
     return { redraw: full, submit: submit };
   };
@@ -362,7 +366,7 @@
   OL.viewList = function (again) {
     var u = LN.me(); OL.fonts();
     var L = mine(u), MKs = MK || {};
-    page('<header class="ol-hero"><span class="ol-blob ol-b1"></span><span class="ol-blob ol-b2"></span><div class="ol-eyebrow">Ôn luyện</div><h1>Đề ôn luyện của em</h1><p>Cô giao đề nào sẽ hiện ở đây. Làm xong câu nào bấm <b>Kiểm tra câu này</b> để biết đúng sai và xem lời giải. Em được làm lại nhiều lần, cô xem được tất cả các lần em làm.</p></header>' +
+    page('<header class="ol-hero"><span class="ol-blob ol-b1"></span><span class="ol-blob ol-b2"></span><div class="ol-eyebrow">Ôn luyện</div><h1>Đề ôn luyện của em</h1><p>Cô giao đề nào sẽ hiện ở đây. Em làm hết bài rồi bấm <b>Nộp bài</b> mới xem được đáp án và lời giải. Em được làm lại nhiều lần, cô xem được tất cả các lần em làm.</p></header>' +
       (L.length ? '<div class="ol-list">' + L.map(function (m) {
         var at = attempts(u.username, m.id).map(function (x) { var sc = OL.scoreWith(x, (MKs[m.id] || {})[x.t]); return Object.assign(x, { s: sc.s, mk: sc.mk }); }), wip = store.get('ln_olwip_' + u.username + '_' + m.id, null), best = at.reduce(function (b, x) { return Math.max(b, +x.s || 0); }, 0);
         return '<div class="ol-card"><span class="ol-k2">' + esc(m.kicker || 'Đề ôn luyện') + '</span><h3>' + esc(m.title) + '</h3><p>' + (m.n || 0) + ' câu' + (at.length ? ' · Đã làm ' + at.length + ' lần · Điểm cao nhất <b>' + fmt(best) + '</b>' : ' · Chưa làm') + '</p>' +
@@ -389,7 +393,7 @@
         }
         var st = store.get(wk, null); if (!st || !st.a || st.v !== (index().tests[id] || {}).updated) st = { a: {}, v: (index().tests[id] || {}).updated };
         OL.mount({ T: T, st: st, mode: 'do', root: root,
-          topHTML: '<div class="ol-info"><b>Học sinh:</b> ' + esc(u.name) + (u.gv ? ' <span class="ol-pill ol-y">Cô đang xem như học sinh – kết quả không lưu</span>' : '') + '<ul class="ol-rules"><li>Mỗi câu được chấm ngay khi em bấm <b>Kiểm tra câu này</b>, kèm <b>lời giải và lí thuyết</b>. Câu đã kiểm tra sẽ bị khóa, <b>không sửa lại được</b>, nên em làm cẩn thận rồi mới bấm.</li><li>Làm hết bài thì bấm <b>Nộp bài</b> để chốt điểm. Câu nào chưa kiểm tra sẽ được chấm luôn lúc nộp. Kết quả <b>tự gửi cho cô</b>.</li><li>Câu nào sai sẽ có phần <b>giải thích lỗi sai</b> ngay bên dưới. Em chép câu đó và đáp án đúng vào vở.</li><li>Câu viết được chấm theo nghĩa: em viết cách khác mà vẫn đúng thì vẫn được điểm. Cô có thể chấm lại.</li></ul></div>',
+          topHTML: '<div class="ol-info"><b>Học sinh:</b> ' + esc(u.name) + (u.gv ? ' <span class="ol-pill ol-y">Cô đang xem như học sinh – kết quả không lưu</span>' : '') + '<ul class="ol-rules"><li>Em làm lần lượt các câu, <b>chưa nộp thì vẫn sửa được</b>. Bài đang làm được lưu trên máy, tắt máy mở lại vẫn còn.</li><li>Làm xong bấm <b>Nộp bài</b> ở cuối trang. <b>Nộp rồi mới hiện điểm và đáp án</b>, và không sửa được nữa. Kết quả <b>tự gửi cho cô</b>.</li><li>Chữa bài: câu nào sai có <b>lí do sai</b>, <b>đáp án đúng</b>, lời giải và <b>lí thuyết cần nhớ</b> ngay bên dưới. Em chép câu sai và đáp án đúng vào vở.</li><li>Câu viết được chấm theo nghĩa: viết cách khác mà vẫn đúng thì vẫn được điểm. Cô có thể chấm lại.</li></ul></div>',
           onSave: function (s) { if (!u.gv) store.set(wk, s); },
           onSubmit: function (s, r) {
             if (u.gv) return;
@@ -432,4 +436,4 @@
   };
 })();
 ;
-(window.LN_V=window.LN_V||{})["onluyen.js"]="39613b1a";
+(window.LN_V=window.LN_V||{})["onluyen.js"]="a5ffde20";

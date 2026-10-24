@@ -27,6 +27,7 @@
       T.v = o.v = Date.now();
       store.set('ln_olt_' + id, o);
       var x = ix(), m = x.tests[id] || (x.tests[id] = { status: 'nhap', created: Date.now() });
+      if (m.grade == null) m.grade = guessGrade((T.title || '') + ' ' + (T.kicker || '') + ' ' + (T.desc || '')) || null;
       m.title = T.title || 'Đề ôn luyện'; m.kicker = T.kicker || ''; m.n = T.total; m.updated = T.v; m.nokey = T.nokey || 0; delete m.del; saveIx(x);
       if (!quiet) toast('✅ Đã lưu đề');
       return T;
@@ -38,6 +39,9 @@
   function users() { return LN.users ? LN.users() : store.get('ln_users', {}); }
   function classes() { var c = store.get('ln_classes', {}) || {}; return Object.keys(c).map(function (k) { return c[k]; }).filter(function (c) { return c && !c.del && !c.archived; }); }
   function gname(g) { return LN.gradeName ? LN.gradeName(+g) : 'Lớp ' + g; }
+  /* khối của đề: cô chọn, hoặc đoán từ tên đề (vd. "Tiếng Anh 7", "GS7", "lớp 4") */
+  function guessGrade(t) { var m = /(?:lớp|lop|khối|khoi|tiếng anh|tieng anh|grade|gs|global success)\s*(\d{1,2})\b/i.exec(String(t || '')); var g = m ? +m[1] : 0; return g >= 1 && g <= 12 ? g : 0; }
+  function gradeOf(m) { return +m.grade || guessGrade((m.title || '') + ' ' + (m.kicker || '') + ' ' + (m.src || '')) || (m.grades && m.grades.length ? +m.grades[0] : 0); }
   function uh(un) { return LN.hash('ol:' + un); }
   /* lớp có thêm / bớt học sinh: cập nhật danh sách được giao theo lớp */
   function syncClassUsers() {
@@ -57,9 +61,15 @@
     syncClassUsers();
     var x = ix(), ids = Object.keys(x.tests).filter(function (id) { return !x.tests[id].del; }).sort(function (a, b) { return (x.tests[b].updated || 0) - (x.tests[a].updated || 0); });
     var cnt = {}; Object.keys(users()).forEach(function (un) { var p = store.get('ln_prog_' + un, null); if (p && p.ol) Object.keys(p.ol).forEach(function (id) { cnt[id] = (cnt[id] || 0) + 1; }); });
-    shell('<h1 style="margin-bottom:6px">📝 Ôn luyện đề</h1><p class="muted" style="margin-bottom:16px">Tải lên file đề (Word, PDF hoặc Excel) có đáp án → web tự tạo đề ôn luyện giống mẫu GS7: chấm từng câu, lời giải, lí thuyết, giải thích lỗi sai. Cô xem và sửa bản nháp rồi mới giao cho lớp.</p>' +
+    shell('<h1 style="margin-bottom:6px">📝 Ôn luyện đề</h1><p class="muted" style="margin-bottom:16px">Tải lên file đề (Word, PDF hoặc Excel) có đáp án → web tự tạo đề ôn luyện giống mẫu GS7. Học sinh làm xong bấm Nộp bài mới thấy điểm, đáp án, lí do sai và lí thuyết từng câu; cô luôn xem được toàn bộ đáp án ở đây. Cô xem và sửa bản nháp rồi mới giao cho lớp.</p>' +
       '<div class="ol-toolbar" style="margin-bottom:16px"><a class="ol-btn ol-solid" style="text-decoration:none" href="#/admin/onluyen/moi">➕ Tạo đề từ file Word / PDF / Excel</a>' + (x.tests['gs7-mid1'] && !x.tests['gs7-mid1'].del ? '' : '<button type="button" class="ol-btn" data-ola="sample">Nạp đề mẫu GS7</button>') + '</div>' +
-      (ids.length ? '<div class="ol-list">' + ids.map(function (id) {
+      (ids.length ? (function () {
+        var groups = {}; ids.forEach(function (id) { var g = gradeOf(x.tests[id]); (groups[g] = groups[g] || []).push(id); });
+        var gs = Object.keys(groups).map(Number).sort(function (a, b) { return (a || 99) - (b || 99); });
+        return '<div class="ol-toolbar" style="margin-bottom:12px">' + gs.map(function (g) { return '<button type="button" class="ol-btn ol-sm" data-ola="jumpg" data-g="' + g + '">' + (g ? 'Khối ' + g : 'Chưa xếp khối') + ' · ' + groups[g].length + ' đề</button>'; }).join('') + '</div>' +
+          gs.map(function (g) { return '<section id="olg-' + g + '" style="margin-bottom:22px"><h2 style="margin:6px 0 10px;color:var(--brand)">' + (g ? '📚 Khối ' + g : '📂 Chưa xếp khối') + ' <span class="ol-hint" style="font-weight:600">(' + groups[g].length + ' đề)</span></h2>' + (g ? '' : '<p class="ol-hint" style="margin:-4px 0 10px">Mở đề → «Sửa tên đề» để chọn khối.</p>') + '<div class="ol-list">' + groups[g].map(card).join('') + '</div></section>'; }).join('');
+      })() : '<div class="ol-empty">Chưa có đề nào. Bấm <b>Tạo đề từ file</b> để bắt đầu.</div>'));
+    function card(id) {
         var m = x.tests[id], to = [];
         (m.grades || []).forEach(function (g) { to.push(gname(g)); }); (m.classNames || []).forEach(function (n) { to.push(n); });
         return '<div class="ol-card"><span class="ol-k2">' + esc(m.kicker || 'Đề ôn luyện') + '</span><h3>' + esc(m.title) + '</h3>' +
@@ -70,7 +80,7 @@
           '<a class="ol-btn ol-sm" style="text-decoration:none" href="#/admin/onluyen/' + id + '/kq">📊 Kết quả</a>' +
           (m.status === 'giao' ? '<button type="button" class="ol-btn ol-sm ol-ghost" data-ola="unassign" data-id="' + id + '">Thu hồi</button>' : '') +
           '<button type="button" class="ol-btn ol-sm ol-ghost" data-ola="del" data-id="' + id + '">Xoá</button></div></div>';
-      }).join('') + '</div>' : '<div class="ol-empty">Chưa có đề nào. Bấm <b>Tạo đề từ file</b> để bắt đầu.</div>'));
+    }
   }
 
   /* ================= Giao đề ================= */
@@ -187,11 +197,11 @@
       .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok || !j.key) throw new Error(r.status === 401 ? 'Phiên đăng nhập hết hạn, cô đăng nhập lại.' : r.status === 503 ? 'Chưa có khoá Gemini trên máy chủ.' : 'Không lấy được khoá Gemini (' + r.status + ')'); return j.key; }); });
   }
   /* Mẫu AI: hỏi Google danh sách mẫu khoá này dùng được (mẫu cũ bị ngừng cho tài khoản mới), mẫu nào chạy được thì lần sau dùng trước */
-  var MODELS = null, GOOD = null, FALLBACK = ['gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-flash-latest', 'gemini-3.1-pro-preview', 'gemini-2.5-pro'];
+  var KEY0 = null, MODELS = null, GOOD = null, FALLBACK = ['gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-flash-latest', 'gemini-3.1-pro-preview', 'gemini-2.5-pro'];
   function gemBase() { return LN._gemBase || 'https://generativelanguage.googleapis.com'; }
   function models() {
     if (MODELS) return Promise.resolve(MODELS);
-    return fetch(gemBase() + '/v1beta/models?pageSize=1000', { headers: { 'x-goog-api-key': JOB.key } }).then(function (r) { return r.ok ? r.json() : null; })
+    return fetch(gemBase() + '/v1beta/models?pageSize=1000', { headers: { 'x-goog-api-key': (JOB && JOB.key) || KEY0 } }).then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) { var L = j && j.models && window.AIPROMPTS ? window.AIPROMPTS.rankModels(j.models) : []; MODELS = L.length ? L.slice(0, 6) : FALLBACK; return MODELS; }, function () { MODELS = FALLBACK; return MODELS; });
   }
   function gem(parts, opt) {
@@ -201,7 +211,7 @@
         if (i >= L.length) return Promise.reject(last && last.hard ? last : new Error('Không mẫu AI nào trả lời được. ' + tried.join(' · ')));
         var model = L[i++], body = { contents: [{ role: 'user', parts: parts }], generationConfig: { responseMimeType: 'application/json', temperature: 0.2, maxOutputTokens: opt.max || 32000 } };
         if (/2\.5/.test(model)) body.generationConfig.thinkingConfig = { thinkingBudget: opt.think == null ? 1024 : opt.think };
-        return fetch(gemBase() + '/v1beta/models/' + model + ':generateContent', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': JOB.key }, body: JSON.stringify(body) })
+        return fetch(gemBase() + '/v1beta/models/' + model + ':generateContent', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': opt.key || JOB.key }, body: JSON.stringify(body) })
           .then(function (r) { return r.text().then(function (tx) {
             if (!r.ok) {
               var msg = ''; try { msg = JSON.parse(tx).error.message; } catch (e) { msg = tx.slice(0, 120); }
@@ -319,6 +329,28 @@
     }).catch(function () { jobs.forEach(function (it) { if (!it.src) it.src = ''; }); }).then(fin);
   }
 
+  /* ---- AI viết lí do sai còn thiếu (đề nạp sẵn / cô tự thêm câu) ---- */
+  function missingWhy(T) { var n = 0; T.parts.forEach(function (p) { p.items.forEach(function (it) { if (it.t === 'q' && it.opts.some(function (o, i) { return i !== it.ans && !(it.why || {})[i]; })) n++; }); }); return n; }
+  function fillWhy(id) {
+    var T = ED.T, btn = document.querySelector('[data-ola=fillwhy]'), done = 0, parts = T.parts.filter(function (p) { return p.items.some(function (it) { return it.t === 'q' && it.opts.some(function (o, i) { return i !== it.ans && !(it.why || {})[i]; }); }); });
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="ol-spin"></span>AI đang viết… 0/' + parts.length + ' phần'; }
+    return gemKey().then(function (key) {
+      KEY0 = key;
+      return parts.reduce(function (pr, p) { return pr.then(function () {
+        var need = p.items.filter(function (it) { return it.t === 'q' && it.opts.some(function (o, i) { return i !== it.ans && !(it.why || {})[i]; }); });
+        var slim = { ro: p.ro, label: p.label, lead: p.lead, items: need.map(function (it) { return { t: 'q', n: it.n, stem: it.stem, opts: it.opts, ans: it.ans, kind: it.kind }; }) };
+        var prompt = EXPLAIN.replace('EXISTING_KEYS', Object.keys(T.theory).join(', ') || '(none yet)') + '\n\nTHEORY NOTES:\n(none)\n\nPART:\n' + JSON.stringify(slim);
+        return gem([{ text: prompt }], { max: 16000, think: 512, key: key }).then(function (j) {
+          var byN = {}; (j && Array.isArray(j.items) ? j.items : []).forEach(function (x) { if (x && typeof x === 'object') byN[String(x.n)] = x; });
+          (j && Array.isArray(j.rules) ? j.rules : []).forEach(function (r0) { if (!r0 || !r0.t) return; var k = String(r0.key || '').toUpperCase().replace(/[^A-Z0-9_]/g, '').slice(0, 30); if (k && !T.theory[k]) T.theory[k] = { t: String(r0.t), f: (Array.isArray(r0.f) ? r0.f : []).filter(Array.isArray).slice(0, 2).map(function (x) { return [String(x[0] || ''), String(x[1] || '')]; }), b: (Array.isArray(r0.b) ? r0.b : []).slice(0, 4).map(String) }; if (k && !(p.th || []).length) p.th = [k]; });
+          need.forEach(function (it) { var x = byN[String(it.n)]; if (!x) return; it.why = it.why || {};
+            if (x.why && typeof x.why === 'object') Object.keys(x.why).forEach(function (i) { var ii = /^[A-H]$/i.test(i) ? LET.indexOf(i.toUpperCase()) : +i; if (ii >= 0 && ii < it.opts.length && ii !== it.ans && x.why[i] && !it.why[ii]) it.why[ii] = String(x.why[i]); });
+            if (!it.exp && x.exp) it.exp = String(x.exp); var tk = String(x.th || '').toUpperCase(); if (!it.th && T.theory[tk]) it.th = tk; });
+        }, function () {}).then(function () { done++; if (btn) btn.innerHTML = '<span class="ol-spin"></span>AI đang viết… ' + done + '/' + parts.length + ' phần'; });
+      }); }, Promise.resolve());
+    }).then(function () { return saveT(id, T); }).then(function () { toast('✅ AI đã viết lí do sai cho các câu còn thiếu – cô xem lại nhé'); viewEdit(id); }, function (e) { toast('Chưa viết được: ' + (e && e.message || e)); viewEdit(id); });
+  }
+
   /* ================= Xem & sửa đề ================= */
   var ED = null;   // { id, T, mode }
   function viewEdit(id) {
@@ -328,10 +360,11 @@
     ED.T = T; tagIds(T);
     var st = { a: {} };
     shell('<p><a href="#/admin/onluyen">← Danh sách đề</a></p>' +
-      '<div class="ol-info" style="margin:8px 0 14px"><div class="ol-toolbar"><b>' + (m.status === 'giao' ? '<span class="ol-pill ol-g">Đã giao</span>' : '<span class="ol-pill ol-y">Bản nháp</span>') + '</b>' +
+      '<div class="ol-info" style="margin:8px 0 14px"><div class="ol-toolbar"><b>' + (m.status === 'giao' ? '<span class="ol-pill ol-g">Đã giao</span>' : '<span class="ol-pill ol-y">Bản nháp</span>') + ' <span class="ol-pill">' + (gradeOf(m) ? 'Khối ' + gradeOf(m) : 'Chưa xếp khối') + '</span></b>' +
       '<button type="button" class="ol-btn ol-sm' + (ED.mode === 'edit' ? ' ol-solid' : '') + '" data-ola="mode" data-v="edit">✏️ Sửa đề (hiện đáp án)</button>' +
       '<button type="button" class="ol-btn ol-sm' + (ED.mode === 'preview' ? ' ol-solid' : '') + '" data-ola="mode" data-v="preview">👁 Làm thử như học sinh</button>' +
-      '<button type="button" class="ol-btn ol-sm" data-ola="meta">Sửa tên đề</button>' +
+      '<button type="button" class="ol-btn ol-sm" data-ola="meta">Sửa tên đề & khối</button>' +
+      (missingWhy(T) ? '<button type="button" class="ol-btn ol-sm" data-ola="fillwhy">🤖 AI viết lí do sai còn thiếu (' + missingWhy(T) + ' câu)</button>' : '') +
       '<button type="button" class="ol-btn ol-sm ' + (m.status === 'giao' ? '' : 'ol-solid') + '" data-ola="assign" data-id="' + id + '">' + (m.status === 'giao' ? 'Đổi lớp được giao' : '📤 Giao đề') + '</button>' +
       '<a class="ol-btn ol-sm" style="text-decoration:none" href="#/admin/onluyen/' + id + '/kq">📊 Kết quả</a></div>' +
       (m.nokey ? '<p class="ol-hint" style="color:var(--wait)">⚠ Có ' + m.nokey + ' câu file không có đáp án – AI tự giải, cô kiểm tra kỹ các câu này.</p>' : '') +
@@ -432,8 +465,10 @@
   }
   function metaForm() {
     var T = ED.T;
-    modal('Sửa tên đề', '<label>Tên đề</label><input name="title" value="' + esc(T.title || '') + '"><label>Dòng nhỏ phía trên (ví dụ: Tiếng Anh 7 · Global Success · Giữa kì I)</label><input name="kicker" value="' + esc(T.kicker || '') + '"><label>Mô tả</label><textarea name="desc">' + esc(T.desc || '') + '</textarea>', function (a, box) {
-      T.title = v(box, 'title'); T.kicker = v(box, 'kicker'); T.desc = v(box, 'desc'); saveT(ED.id, T).then(function () { viewEdit(ED.id); }, function () {});
+    var m0 = ix().tests[ED.id] || {}, g0 = gradeOf(m0), opts = '<option value="">(chưa xếp khối)</option>'; for (var g = 1; g <= 12; g++) opts += '<option value="' + g + '"' + (g === g0 ? ' selected' : '') + '>Khối ' + g + '</option>';
+    modal('Sửa tên đề & khối', '<label>Khối</label><select name="grade">' + opts + '</select><label>Tên đề</label><input name="title" value="' + esc(T.title || '') + '"><label>Dòng nhỏ phía trên (ví dụ: Tiếng Anh 7 · Global Success · Giữa kì I)</label><input name="kicker" value="' + esc(T.kicker || '') + '"><label>Mô tả</label><textarea name="desc">' + esc(T.desc || '') + '</textarea>', function (a, box) {
+      T.title = v(box, 'title'); T.kicker = v(box, 'kicker'); T.desc = v(box, 'desc'); var gsel = +v(box, 'grade') || 0;
+      saveT(ED.id, T).then(function () { var x = ix(); if (x.tests[ED.id]) { x.tests[ED.id].grade = gsel || null; saveIx(x); } viewEdit(ED.id); }, function () {});
     });
   }
 
@@ -501,7 +536,9 @@
     else if (a === 'sample') { if (!window.OL_SAMPLE_GS7) return; var T = JSON.parse(JSON.stringify(window.OL_SAMPLE_GS7)); saveT('gs7-mid1', T, true).then(function () { var x3 = ix(); x3.tests['gs7-mid1'].src = 'GS7 First Midterm.html'; saveIx(x3); toast('Đã nạp đề mẫu GS7 (bản nháp)'); LN.go('#/admin/onluyen/gs7-mid1'); }); }
     else if (a === 'mode' && ED) { ED.mode = t.getAttribute('data-v'); viewEdit(ED.id); }
     else if (a === 'meta' && ED) metaForm();
+    else if (a === 'fillwhy' && ED) fillWhy(ED.id);
+    else if (a === 'jumpg') { var el = document.getElementById('olg-' + t.getAttribute('data-g')); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
   });
 })();
 ;
-(window.LN_V=window.LN_V||{})["onluyen_admin.js"]="895d7eb5";
+(window.LN_V=window.LN_V||{})["onluyen_admin.js"]="9e0d3108";

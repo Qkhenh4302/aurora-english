@@ -174,14 +174,15 @@
     var model = pickModel(); if (!model) return Promise.reject({ stop: 'Đã dùng hết lượt Gemini của Google trong ngày. Google làm mới lượt lúc ' + resetVN() + ' (giờ Việt Nam) – sau giờ đó mở trang này và bấm «Thu tiếp giọng Puck».' });
     G.model = model; G.req++; reqToday(1); perModel(model);
     var lines = items.map(function (x) { return x.t; }), mode = items[0].m;
-    var prompt = BSTYLE[mode] + '\n\nRead the ' + lines.length + ' lines below for an English lesson. Read every line exactly as written, in order, exactly once. Do not read line numbers, do not add or skip any words. ' +
-      'After EACH line stay completely silent for two full seconds before starting the next line. Inside a line, " — " means a second person answers: make a short natural pause (about half a second) there.\n\n' + lines.join('\n');
+    var prompt = '### DIRECTOR\'S NOTES (do NOT read this section aloud)\n' + BSTYLE[mode] + '\nSpeak ONLY the ' + lines.length + ' lines under TRANSCRIPT, exactly as written, in order, each exactly once. Never speak these notes, the headings, or any numbers that are not in a line. ' +
+      'After EACH line stay completely silent for two full seconds. Inside a line, " — " means a second person answers: pause about half a second there.\n\n### TRANSCRIPT\n' + lines.join('\n');
     return apiKey().then(function (key) {
       return fetch((LN._gemBase || 'https://generativelanguage.googleapis.com') + '/v1beta/models/' + model + ':generateContent', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } } }) });
     }).then(function (r) {
       if (r.ok) return r.json().then(function (j) {
         var part = ((((j.candidates || [])[0] || {}).content || {}).parts || []).filter(function (x) { return x.inlineData; })[0];
         if (!part) throw { retry: true, msg: 'Gemini không trả âm thanh' };
+        G.busy5 = 0;
         var m = /rate=(\d+)/.exec(part.inlineData.mimeType || '');
         return { rate: m ? +m[1] : 24000, pcm: b64pcm(part.inlineData.data), model: model };
       });
@@ -193,6 +194,7 @@
           throw { wait: 65000, msg: 'Gemini đang giới hạn số lượt mỗi phút – chờ 1 phút rồi chạy tiếp…' };
         }
         if (r.status === 404 || (r.status === 400 && /model|not found|not supported/i.test(d))) { G.badModel = G.badModel || {}; G.badModel[model] = 1; return callBatch(items, voice); }
+        if (r.status >= 500) { G.busy5 = (G.busy5 || 0) + 1; throw { wait: Math.min(60000, 15000 * Math.min(4, G.busy5)), msg: 'Máy chủ Google đang quá tải (lỗi ' + r.status + ', không phải lỗi web) – tự chờ rồi thử lại, nhóm câu này không bị bỏ…' }; }
         throw { retry: true, msg: 'Lỗi ' + r.status + ': ' + d.slice(0, 160) };
       });
     });
@@ -242,11 +244,28 @@
       });
     }).catch(function () { return null; });
   }
+  /* Gemini đôi khi đọc cả phần hướng dẫn ở đầu: nếu đoạn nói đầu tiên dài bất thường so với câu đầu, cắt bỏ nó */
+  function trimLead(pcm, rate, firstText) {
+    var fr = Math.round(rate * 0.02), nf = Math.floor(pcm.length / fr), thr = 250, i, j, st = -1, end = -1, sil = 0;
+    for (i = 0; i < nf; i++) {
+      var e = 0; for (j = i * fr; j < (i + 1) * fr; j += 2) e += pcm[j] * pcm[j]; var loud = Math.sqrt(e / (fr / 2)) > thr;
+      if (loud) { if (st < 0) st = i; sil = 0; end = -1; } else if (st >= 0) { sil++; if (sil === 30) { end = i - 29; break; } }   // khoảng lặng ≥ 0,6 giây
+    }
+    if (st < 0 || end < 0) return null;
+    var sec = (end - st) * 0.02, exp = (String(firstText).length + 8) * 0.075;
+    if (sec < Math.max(5, exp * 2.5) || (end + 30) * fr >= pcm.length * 0.9) return null;
+    return pcm.subarray((end + 20) * fr);
+  }
+  function tooLong(sec, text) { return sec > Math.max(4.5, (String(text).length + 8) * 0.2); }
   function doBatch(items, voice, depth) {
     return callBatch(items, voice).then(function (w) {
       var tl = items.map(function (x) { return x.t; }), segs = split(w.pcm, w.rate, tl), fb = false, checked = Promise.resolve(null);
-      if (!segs && items.length > 1) { segs = split2(w.pcm, w.rate, tl); if (segs) { fb = true; G.v2 = (G.v2 || 0) + 1; checked = verify(segs, w.rate, tl); } }
+      if (!segs && items.length > 1) { segs = split2(w.pcm, w.rate, tl); if (segs) fb = true; }
+      var tlead = (!segs || (items.length === 1 && tooLong(w.pcm.length / w.rate, tl[0]))) ? trimLead(w.pcm, w.rate, tl[0]) : null;
+      if (tlead) { G.lead = (G.lead || 0) + 1; segs = split(tlead, w.rate, tl) || (items.length > 1 ? split2(tlead, w.rate, tl) : null); if (segs) fb = true; }
+      if (segs) { G.v2 = (G.v2 || 0) + 1; checked = verify(segs, w.rate, tl); }   // mọi đoạn đều được nghe kiểm tra (kể cả câu đơn)
       return checked.then(function (good) {
+      if (!fb && segs && !good && items.length === 1) segs = null;                    // câu đơn mà không nghe kiểm tra được: không tin
       var ST = LN._gemStat = LN._gemStat || { strict: 0, fb: 0, fbFail: 0, vnull: 0, vok: 0, vbad: 0, half: 0 }; if (segs && !fb) ST.strict++; if (fb) { ST.fb++; if (!good) ST.vnull++; else { ST.vok += good.filter(Boolean).length; ST.vbad += good.filter(function (x) { return !x; }).length; } } else if (!segs && items.length > 1) ST.fbFail++;
       if (fb && !good) segs = null;                                                    // cắt dự phòng mà không nghe kiểm tra được: không tin
       if (fb && good && good.filter(Boolean).length < Math.ceil(segs.length / 2)) segs = null;   // lệch nhiều: coi như cắt hỏng
@@ -258,6 +277,7 @@
       var ok = 0;
       return Promise.all(segs.map(function (pcm, k) {
         if (good && !good[k]) { G.failed[items[k].k] = items[k].t; G.vbad = (G.vbad || 0) + 1; return; }   // nghe ra không đúng câu: thu lại sau
+        if (tooLong(pcm.length / w.rate, items[k].t)) { G.failed[items[k].k] = items[k].t; G.vlong = (G.vlong || 0) + 1; return; }   // dài bất thường (Gemini đọc cả hướng dẫn)
         var pk = 0; for (var i = 0; i < pcm.length; i += 3) { var a = pcm[i] < 0 ? -pcm[i] : pcm[i]; if (a > pk) pk = a; }
         if (pk < 300) { G.failed[items[k].k] = items[k].t; return; }   // câu Gemini trả về gần như im lặng
         var b = mp3(pcm, w.rate);
@@ -265,7 +285,7 @@
           if (lv < 0.01) { G.failed[items[k].k] = items[k].t; G.msg = '⚠ Một câu ra file câm, sẽ thu lại: ' + items[k].t.slice(0, 50); return; }
           ok++; return put('clips', items[k].k, { b: b, m: w.model, q: 2 });
         });
-      })).then(function () { G.done += ok; draw(); });
+      })).then(function () { G.done += ok; G.saved = (G.saved || 0) + ok; draw(); });
       });
     }, function (e) {
       if (e && e.retry && (depth || 0) < 3) { G.err++; G.msg = e.msg; draw(); return new Promise(function (ok) { setTimeout(ok, 3000); }).then(function () { return doBatch(items, voice, (depth || 0) + 1); }); }
@@ -294,7 +314,7 @@
         var b = queue.shift();
         return doBatch(b, voice, 0).then(worker, function (e) {
           if (e && e.wait) { queue.unshift(b); G.msg = e.msg; draw(); return new Promise(function (ok) { setTimeout(ok, e.wait); }).then(worker); }
-          G.stop = true; queue.unshift(b); G.msg = (e && e.stop) || ('Dừng vì lỗi: ' + (e && e.message || e)); draw();
+          G.stop = true; queue.unshift(b); G.msg = (e && e.stop) || ('Dừng vì lỗi: ' + (e && (e.message || e.msg) || (typeof e === 'object' ? JSON.stringify(e).slice(0, 160) : e))); draw();
         });
       };
       var ws = [], np = LN._gemPar || Math.min(6, Math.max(PAR, liveModels().length * 2)); for (var i = 0; i < np; i++) ws.push(worker());
@@ -456,6 +476,7 @@
     el.innerHTML = (G.total ? '<div class="tk-bar" style="height:12px;margin:8px 0"><i style="width:' + pct + '%"></i></div><b style="font-size:16px">Đã thu ' + G.done + ' / ' + G.total + ' câu (' + pct + '%)</b>' : '<b>Đã thu ' + G.done + ' câu</b>') +
       ' · từ lúc Google làm mới lượt đã dùng <b>' + used + '</b> lượt (lượt mới lúc ' + resetVN() + ')' + (G.err ? ' · thử lại: ' + G.err : '') +
       (function () { var pm = perModel(), ex = exhausted(), bad = G.badModel || {}; var ks = Object.keys(pm); return ks.length ? '<div class="tiny muted" style="margin-top:4px">' + ks.map(function (m) { return esc(m.replace(/^gemini-/, '').replace(/-tts$/, '')) + ': ' + pm[m] + (ex[m] ? ' (hết lượt' + (ex[m] > 1 ? ', Google cho ' + ex[m] + ' lượt/ngày' : '') + ')' : bad[m] ? ' (không dùng được)' : ''); }).join(' · ') + '</div>' : ''; })() +
+      (G.req ? '<div class="tiny muted" style="margin-top:2px">Phiên này: ' + (G.saved || 0) + ' câu / ' + G.req + ' lượt = <b>' + ((G.saved || 0) / G.req).toFixed(1) + ' câu mỗi lượt</b>' + (function () { var S = LN._gemStat || {}; return ' · cắt chuẩn ' + (S.strict || 0) + ' · cắt dự phòng ' + (S.fb || 0) + ' · bỏ vì nghe ra sai câu ' + (G.vbad || 0) + ' · bỏ vì đoạn dài bất thường ' + (G.vlong || 0) + ' · cắt bỏ phần Gemini đọc nhầm hướng dẫn ' + (G.lead || 0); })() + '</div>' : '') +
       '<div style="margin-top:6px">' + esc(G.msg) + '</div>' + (G.pub ? '<div style="margin-top:6px">' + esc(G.pub) + '</div>' : '');
     var b1 = document.getElementById('gm-start'); if (b1) { b1.disabled = G.run; b1.textContent = G.run ? '🎙 Đang thu…' : (G.done ? '🎙 Thu tiếp giọng Puck' : '🎙 Bắt đầu thu giọng Puck'); }
     var gb = document.getElementById('gm-gh');
@@ -477,9 +498,17 @@
     return keys('clips').then(function (ks) { return ks.reduce(function (p, k) { return p.then(function () { return get('clips', k); }).then(function (v) { if (!v || v.q !== 2) { del++; return tx('clips', 'readwrite', function (s) { s.delete(k); }); } }); }, Promise.resolve()); })
       .then(function () { return del ? put('meta', 'published', null) : null; }).then(function () { return del; }, function () { return 0; });
   }
+  function purgeLong(list) {
+    var txt = {}, del = 0; (list || []).forEach(function (x) { txt[x.k] = x.t; });
+    return keys('clips').then(function (ks) { return ks.reduce(function (p, k) { return p.then(function () { return get('clips', k); }).then(function (v) {
+      if (!v || !v.b || txt[k] == null) return;
+      var sec = v.b.length * 8 / (KBPS * 1000);
+      if (tooLong(sec, txt[k])) { del++; return tx('clips', 'readwrite', function (s) { s.delete(k); }); }
+    }); }, Promise.resolve()); }).then(function () { return del ? put('meta', 'published', null) : null; }).then(function () { return del; }, function () { return 0; });
+  }
   LN.gemInit = function () {
     var cb = document.getElementById('gm-auto'); if (cb) cb.addEventListener('change', function () { try { localStorage.setItem('ln_gem_auto', cb.checked ? '1' : '0'); } catch (e) {} });
-    if (!G.total) purgeOld().then(function (nDel) { if (nDel) G.msg = '🔧 Đã xoá ' + nDel + ' câu thu trước đây bị lỗi câm (không có tiếng). Bấm «Thu tiếp giọng Puck» để thu lại – đã sửa lỗi.'; return Promise.all([keys('clips'), corpus()]); }).then(function (r) { G.done = r[0].length; G.total = r[1].length; G.list = r[1]; if (!G.msg) G.msg = G.done ? 'Bấm «Thu tiếp giọng Puck» để làm tiếp.' : 'Chưa thu câu nào. Bấm «Bắt đầu thu giọng Puck».'; draw(); }).catch(function () {});
+    if (!G.total) purgeOld().then(function (nDel) { if (nDel) G.msg = '🔧 Đã xoá ' + nDel + ' câu thu trước đây bị lỗi câm (không có tiếng). Bấm «Thu tiếp giọng Puck» để thu lại – đã sửa lỗi.'; return corpus().then(function (cl) { return purgeLong(cl).then(function (nl) { if (nl) G.msg = '🔧 Đã xoá ' + nl + ' câu thu bị lỗi (Gemini đọc nhầm cả phần hướng dẫn, đoạn dài bất thường). Lần đưa lên app tới sẽ thay toàn bộ; bấm «Thu tiếp giọng Puck» để thu lại các câu này.'; return Promise.all([keys('clips'), cl]); }); }); }).then(function (r) { G.done = r[0].length; G.total = r[1].length; G.list = r[1]; if (!G.msg) G.msg = G.done ? 'Bấm «Thu tiếp giọng Puck» để làm tiếp.' : 'Chưa thu câu nào. Bấm «Bắt đầu thu giọng Puck».'; draw(); }).catch(function () {});
     ghCheck(); draw();
   };
   LN.gemClick = function (a, ev) {
@@ -498,4 +527,4 @@
   };
 })();
 ;
-(window.LN_V=window.LN_V||{})["gemgen.js"]="809ba20e";
+(window.LN_V=window.LN_V||{})["gemgen.js"]="81814124";
