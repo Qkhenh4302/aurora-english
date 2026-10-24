@@ -139,7 +139,7 @@
           : '<input id="i' + it.k + '" data-ol="in" data-k="' + it.k + '" type="text" autocomplete="off" spellcheck="false" placeholder="Gõ câu trả lời của em" value="' + esc(val) + '"' + (lock ? ' disabled' : '') + '>') + '</div>';
     }
     var cls = 'ol-q' + (s.checked ? (s.pend ? ' ol-wait' : s.pts >= 0.999 ? ' ol-ok' : ' ol-no') : '');
-    var act = mode === 'do' || mode === 'preview' ? (s.busy ? '<div class="ol-act"><span class="ol-tag"><span class="ol-spin"></span>Đang chấm…</span></div>' : s.checked ? '<div class="ol-act">' + tagHTML(s) + '</div>' : '') : (mode === 'review' ? '<div class="ol-act">' + tagHTML(s) + (st.mark && st.mark[it.k] != null ? ' <span class="ol-pill">Cô chấm lại: ' + fmt(st.mark[it.k]) + ' điểm</span>' : '') + '</div>' : '');
+    var act = (mode === 'do' || mode === 'preview') && st.perCheck && !s.checked ? '<div class="ol-act"><button type="button" class="ol-btn ol-chk" data-ol="chk" data-k="' + it.k + '"' + (s.busy || !ready(it, s) ? ' disabled' : '') + '>' + (s.busy ? '<span class="ol-spin"></span>Đang chấm…' : '✔ Kiểm tra câu này') + '</button><span class="ol-hint">Cô xem ngay đáp án, lí do sai và lí thuyết của câu này</span></div>' : mode === 'do' || mode === 'preview' ? (s.busy ? '<div class="ol-act"><span class="ol-tag"><span class="ol-spin"></span>Đang chấm…</span></div>' : s.checked ? '<div class="ol-act">' + tagHTML(s) + '</div>' : '') : (mode === 'review' ? '<div class="ol-act">' + tagHTML(s) + (st.mark && st.mark[it.k] != null ? ' <span class="ol-pill">Cô chấm lại: ' + fmt(st.mark[it.k]) + ' điểm</span>' : '') + '</div>' : '');
     return '<div class="' + cls + '" id="q' + it.k + '"' + edAttr(it, mode0) + '><div class="ol-qn">' + esc(it.n) + '</div><div class="ol-qb">' + inner + act +
       '<div class="ol-fb" id="fb' + it.k + '"' + (s.checked || mode === 'key' ? '' : ' hidden') + '>' + (s.checked || mode === 'key' ? fbHTML(T, it, s, mode) : '') + '</div>' + (st.extra ? st.extra(it, s) : '') + '</div>' + pen(it, mode0) + '</div>';
   }
@@ -214,7 +214,8 @@
   OL.mount = function (opt) {
     OL.fonts();
     var T = opt.T, st = opt.st, root = opt.root, mode = opt.mode, PR = {}, SUBM = false;
-    Object.keys(st.a || {}).forEach(function (k) { var x = st.a[k]; if (!x) return; x.busy = false; if (!st.done && (mode === 'do' || mode === 'preview')) { x.checked = false; x.pts = 0; x.fix = ''; x.why = ''; x.pend = false; } });
+    if (opt.perCheck) st.perCheck = true;
+    Object.keys(st.a || {}).forEach(function (k) { var x = st.a[k]; if (!x) return; x.busy = false; if (!st.done && !st.perCheck && (mode === 'do' || mode === 'preview')) { x.checked = false; x.pts = 0; x.fix = ''; x.why = ''; x.pend = false; } });
     st.mode = mode;
     function full() {
       root.innerHTML = '<div class="olx' + (mode === 'edit' ? ' ol-edit-on' : '') + '"><div class="ol-shell">' + OL.heroHTML(T) + (opt.topHTML || '') + OL.navHTML(T, st) +
@@ -300,7 +301,7 @@
       var c = root.querySelector('#q' + k + ' [data-ol=chk]'); if (c) c.disabled = !ready(it, s);
       refreshTop();
     };
-    root.onkeydown = function (ev) { var t = ev.target; if (ev.key === 'Enter' && t.tagName === 'INPUT' && t.getAttribute('data-ol') === 'in') { ev.preventDefault(); var ins = [].slice.call(root.querySelectorAll('[data-ol=in]:not([disabled])')), ix = ins.indexOf(t); if (ins[ix + 1]) ins[ix + 1].focus(); } };
+    root.onkeydown = function (ev) { var t = ev.target; if (ev.key === 'Enter' && t.tagName === 'INPUT' && t.getAttribute('data-ol') === 'in') { ev.preventDefault(); if (st.perCheck) { var itp = byK(t.getAttribute('data-k')); if (itp) check(itp); return; } var ins = [].slice.call(root.querySelectorAll('[data-ol=in]:not([disabled])')), ix = ins.indexOf(t); if (ins[ix + 1]) ins[ix + 1].focus(); } };
     full(); refreshTop();
     return { redraw: full, submit: submit };
   };
@@ -392,7 +393,7 @@
           return;
         }
         var st = store.get(wk, null); if (!st || !st.a || st.v !== (index().tests[id] || {}).updated) st = { a: {}, v: (index().tests[id] || {}).updated };
-        OL.mount({ T: T, st: st, mode: 'do', root: root,
+        OL.mount({ T: T, st: st, mode: 'do', root: root, perCheck: !!u.gv,
           topHTML: '<div class="ol-info"><b>Học sinh:</b> ' + esc(u.name) + (u.gv ? ' <span class="ol-pill ol-y">Cô đang xem như học sinh – kết quả không lưu</span>' : '') + '<ul class="ol-rules"><li>Em làm lần lượt các câu, <b>chưa nộp thì vẫn sửa được</b>. Bài đang làm được lưu trên máy, tắt máy mở lại vẫn còn.</li><li>Làm xong bấm <b>Nộp bài</b> ở cuối trang. <b>Nộp rồi mới hiện điểm và đáp án</b>, và không sửa được nữa. Kết quả <b>tự gửi cho cô</b>.</li><li>Chữa bài: câu nào sai có <b>lí do sai</b>, <b>đáp án đúng</b>, lời giải và <b>lí thuyết cần nhớ</b> ngay bên dưới. Em chép câu sai và đáp án đúng vào vở.</li><li>Câu viết được chấm theo nghĩa: viết cách khác mà vẫn đúng thì vẫn được điểm. Cô có thể chấm lại.</li></ul></div>',
           onSave: function (s) { if (!u.gv) store.set(wk, s); },
           onSubmit: function (s, r) {
@@ -436,4 +437,4 @@
   };
 })();
 ;
-(window.LN_V=window.LN_V||{})["onluyen.js"]="a5ffde20";
+(window.LN_V=window.LN_V||{})["onluyen.js"]="403ed0a1";

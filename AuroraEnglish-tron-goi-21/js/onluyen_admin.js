@@ -362,7 +362,7 @@
     shell('<p><a href="#/admin/onluyen">← Danh sách đề</a></p>' +
       '<div class="ol-info" style="margin:8px 0 14px"><div class="ol-toolbar"><b>' + (m.status === 'giao' ? '<span class="ol-pill ol-g">Đã giao</span>' : '<span class="ol-pill ol-y">Bản nháp</span>') + ' <span class="ol-pill">' + (gradeOf(m) ? 'Khối ' + gradeOf(m) : 'Chưa xếp khối') + '</span></b>' +
       '<button type="button" class="ol-btn ol-sm' + (ED.mode === 'edit' ? ' ol-solid' : '') + '" data-ola="mode" data-v="edit">✏️ Sửa đề (hiện đáp án)</button>' +
-      '<button type="button" class="ol-btn ol-sm' + (ED.mode === 'preview' ? ' ol-solid' : '') + '" data-ola="mode" data-v="preview">👁 Làm thử như học sinh</button>' +
+      '<button type="button" class="ol-btn ol-sm' + (ED.mode === 'preview' ? ' ol-solid' : '') + '" data-ola="mode" data-v="preview">👁 Làm thử (chấm & chữa từng câu)</button>' +
       '<button type="button" class="ol-btn ol-sm" data-ola="meta">Sửa tên đề & khối</button>' +
       (missingWhy(T) ? '<button type="button" class="ol-btn ol-sm" data-ola="fillwhy">🤖 AI viết lí do sai còn thiếu (' + missingWhy(T) + ' câu)</button>' : '') +
       '<button type="button" class="ol-btn ol-sm ' + (m.status === 'giao' ? '' : 'ol-solid') + '" data-ola="assign" data-id="' + id + '">' + (m.status === 'giao' ? 'Đổi lớp được giao' : '📤 Giao đề') + '</button>' +
@@ -370,7 +370,7 @@
       (m.nokey ? '<p class="ol-hint" style="color:var(--wait)">⚠ Có ' + m.nokey + ' câu file không có đáp án – AI tự giải, cô kiểm tra kỹ các câu này.</p>' : '') +
       (m.status === 'giao' ? '<p class="ol-hint">Đề đang giao: cô sửa xong, học sinh đang làm dở sẽ phải làm lại từ đầu.</p>' : '<p class="ol-hint">Bấm <b>✏️ Sửa</b> ở góc mỗi câu để sửa câu hỏi, đáp án, lời giải. Xem kỹ rồi bấm <b>Giao đề</b>.</p>') + '</div>' +
       '<div id="ol-root"></div>');
-    OL.mount({ T: T, st: st, mode: ED.mode, root: document.getElementById('ol-root'), onReset: function () { viewEdit(id); }, onAction: edAction,
+    OL.mount({ T: T, st: st, mode: ED.mode, perCheck: ED.mode === 'preview', root: document.getElementById('ol-root'), onReset: function () { viewEdit(id); }, onAction: edAction,
       bottomHTML: ED.mode === 'edit' ? '<div class="ol-act"><button type="button" class="ol-btn" data-ol="addpart">➕ Thêm phần mới</button></div>' : '' });
   }
   function tagIds(T) { T.parts.forEach(function (p, pi) { p.items.forEach(function (it, ii) { it._id = pi + '-' + ii; }); }); }
@@ -541,4 +541,4 @@
   });
 })();
 ;
-(window.LN_V=window.LN_V||{})["onluyen_admin.js"]="9e0d3108";
+(window.LN_V=window.LN_V||{})["onluyen_admin.js"]="32a1f211";
