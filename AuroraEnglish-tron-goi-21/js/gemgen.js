@@ -16,7 +16,7 @@
   function clipB(v) { return v && v.b ? v.b : v; }
   function short(m) { return String(m || '?').replace(/^gemini-/, '').replace(/-tts$/, '').replace('-preview', ''); }
   var RR = 0;
-  var BATCH = 40, MAXCH = 1400, PAR = 2, KBPS = 48;   // 48 kbps: giữ nguyên 24 kHz. (32 kbps làm lamejs tự đổi sang 22 kHz và bộ đổi bị lỗi → file câm)
+  var BATCH = 14, MAXCH = 560, PAR = 2, KBPS = 48;   // 48 kbps: giữ nguyên 24 kHz. (32 kbps làm lamejs tự đổi sang 22 kHz và bộ đổi bị lỗi → file câm)
   var KEYP = null;
   function apiKey() { if (!KEYP) KEYP = fetch('api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'key', token: token() }) }).then(function (r) { if (r.status === 401) throw { stop: 'Phiên đăng nhập của cô đã hết hạn. Đăng xuất, đăng nhập lại rồi bấm «Tiếp tục».' }; if (!r.ok) throw { stop: 'Máy chủ chưa có khoá GEMINI_API_KEY.' }; return r.json(); }).then(function (j) { return j.key; }, function (e) { KEYP = null; throw e; }); return KEYP; }
   var BSTYLE = {
@@ -232,12 +232,12 @@
           var model = L[i++], body = { contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: 'audio/mp3', data: data } }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0, maxOutputTokens: 6000 } };
           if (/2\.5/.test(model)) body.generationConfig.thinkingConfig = { thinkingBudget: 0 };
           return fetch(base + '/v1beta/models/' + model + ':generateContent', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(body) })
-            .then(function (res) { if (!res.ok) return next(); return res.json().then(function (j) {
+            .then(function (res) { if (!res.ok) { DLAST.verr = (DLAST.verr || '') + model + ':' + res.status + ' '; return next(); } return res.json().then(function (j) {
               var t = ((((j.candidates || [])[0] || {}).content || {}).parts || []).map(function (x) { return x.thought ? '' : x.text || ''; }).join('');
               var o2 = null; try { o2 = JSON.parse(t.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '')); } catch (e) {}
               var arr = o2 && Array.isArray(o2.t) ? o2.t : null;
-              if (!arr || arr.length !== segs.length) return null;   // đếm không khớp: không chắc → không lưu
-              return lines.map(function (ln, k) { var sc = simText(ln, arr[k]); return sc >= (String(ln).length <= 6 ? 0.5 : 0.62); });
+              if (!arr || arr.length !== segs.length) { DLAST.vcount = arr ? arr.length : 'hỏng'; return null; }   // đếm không khớp: không chắc → không lưu
+              var res = lines.map(function (ln, k) { var sc = simText(ln, arr[k]); return sc >= (String(ln).length <= 6 ? 0.5 : 0.62); }); res.heard = arr; res.vm = model; return res;
             }); }, function () { return next(); });
         }
         return next();
@@ -256,20 +256,68 @@
     if (sec < Math.max(5, exp * 2.5) || (end + 30) * fr >= pcm.length * 0.9) return null;
     return pcm.subarray((end + 20) * fr);
   }
+  /* Nhật ký từng lượt thu (gửi kèm lên GitHub ở voice/diag.json để kiểm tra từ xa) */
+  var DLAST = {};
+  function diag(rec) { var L = []; try { L = JSON.parse(localStorage.getItem('ln_gem_diag') || '[]'); } catch (e) {} L.push(rec); if (L.length > 400) L = L.slice(-400); try { localStorage.setItem('ln_gem_diag', JSON.stringify(L)); } catch (e) {} }
+  LN._gemDiag = function () { try { return JSON.parse(localStorage.getItem('ln_gem_diag') || '[]'); } catch (e) { return []; } };
   function tooLong(sec, text) { return sec > Math.max(4.5, (String(text).length + 8) * 0.2); }
+  /* Nghe kiểm tra lại các câu đã lưu mà chưa từng được kiểm tra (thu trước bản 44, hoặc lúc bước kiểm tra lỗi):
+     câu nào nghe ra không đúng chữ (ví dụ Gemini đọc lẫn câu lệnh) thì xoá để thu lại */
+  function decode24(u8) {
+    var C = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    return new Promise(function (ok) {
+      try {
+        var ac = new C(1, 1, 24000), done = function (buf) { var d = buf.getChannelData(0), o = new Int16Array(d.length); for (var i = 0; i < d.length; i++) { var v = Math.max(-1, Math.min(1, d[i])); o[i] = v * 32767; } ok(o); };
+        var pr = ac.decodeAudioData(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength), done, function () { ok(null); });
+        if (pr && pr.then) pr.then(done, function () { ok(null); });
+      } catch (e) { ok(null); }
+    });
+  }
+  function verifyStored(list) {
+    var txt = {}; (list || []).forEach(function (x) { txt[x.k] = x.t; });
+    return keys('clips').then(function (ks) {
+      var todo = [], del = 0, chk = 0;
+      return ks.reduce(function (p, k) { return p.then(function () { return get('clips', k); }).then(function (v) { if (v && v.b && !v.v && txt[k] != null) todo.push(k); }); }, Promise.resolve()).then(function () {
+        if (!todo.length) return 0;
+        var groups = []; for (var i = 0; i < todo.length; i += 12) groups.push(todo.slice(i, i + 12));
+        return groups.reduce(function (p, g) { return p.then(function () {
+          if (G.stop) return;
+          G.msg = '🔎 Đang nghe kiểm tra lại các câu đã thu trước đây: ' + chk + '/' + todo.length + ' (đã xoá ' + del + ' câu sai, sẽ thu lại)'; draw();
+          var recs = [];
+          return g.reduce(function (p2, k) { return p2.then(function () { return get('clips', k); }).then(function (v) { return decode24(v.b).then(function (pcm) { recs.push({ k: k, v: v, pcm: pcm }); }); }); }, Promise.resolve()).then(function () {
+            var okR = recs.filter(function (r0) { return r0.pcm && r0.pcm.length; });
+            if (!okR.length) return;
+            return verify(okR.map(function (r0) { return r0.pcm; }), 24000, okR.map(function (r0) { return txt[r0.k]; })).then(function (good) {
+              if (!good) return;   // không nghe kiểm tra được lượt này: để lần sau
+              return okR.reduce(function (p3, r0, i) { return p3.then(function () {
+                chk++;
+                if (good[i]) { r0.v.v = 1; return put('clips', r0.k, r0.v); }
+                del++; diag({ t: Date.now(), recheck: 1, bad: [[String(txt[r0.k]).slice(0, 50), String((good.heard || [])[i] || '').slice(0, 80)]] });
+                return tx('clips', 'readwrite', function (s0) { s0.delete(r0.k); });
+              }); }, Promise.resolve());
+            });
+          });
+        }); }, Promise.resolve()).then(function () { if (del) { G.done -= del; return put('meta', 'published', null).then(function () { return del; }); } return 0; });
+      });
+    });
+  }
   function doBatch(items, voice, depth) {
     return callBatch(items, voice).then(function (w) {
+      DLAST = { t: Date.now(), m: w.model, mode: items[0].m, n: items.length, ch: items.reduce(function (a, x) { return a + x.t.length; }, 0), sec: Math.round(w.pcm.length / w.rate * 10) / 10, first: items[0].t.slice(0, 40) };
       var tl = items.map(function (x) { return x.t; }), segs = split(w.pcm, w.rate, tl), fb = false, checked = Promise.resolve(null);
       if (!segs && items.length > 1) { segs = split2(w.pcm, w.rate, tl); if (segs) fb = true; }
       var tlead = (!segs || (items.length === 1 && tooLong(w.pcm.length / w.rate, tl[0]))) ? trimLead(w.pcm, w.rate, tl[0]) : null;
       if (tlead) { G.lead = (G.lead || 0) + 1; segs = split(tlead, w.rate, tl) || (items.length > 1 ? split2(tlead, w.rate, tl) : null); if (segs) fb = true; }
       if (segs) { G.v2 = (G.v2 || 0) + 1; checked = verify(segs, w.rate, tl); }   // mọi đoạn đều được nghe kiểm tra (kể cả câu đơn)
       return checked.then(function (good) {
+      DLAST.sp = segs ? (tlead ? 'lead' : fb ? 'fb' : 'strict') : 'none'; DLAST.v = good ? good.filter(Boolean).length + '/' + good.length : (segs ? 'null' : '-');
+      if (good && good.heard) { DLAST.vm = good.vm; DLAST.bad = []; good.forEach(function (g, k) { if (!g && DLAST.bad.length < 4) DLAST.bad.push([tl[k].slice(0, 50), String(good.heard[k] || '').slice(0, 80)]); }); }
       if (!fb && segs && !good && items.length === 1) segs = null;                    // câu đơn mà không nghe kiểm tra được: không tin
       var ST = LN._gemStat = LN._gemStat || { strict: 0, fb: 0, fbFail: 0, vnull: 0, vok: 0, vbad: 0, half: 0 }; if (segs && !fb) ST.strict++; if (fb) { ST.fb++; if (!good) ST.vnull++; else { ST.vok += good.filter(Boolean).length; ST.vbad += good.filter(function (x) { return !x; }).length; } } else if (!segs && items.length > 1) ST.fbFail++;
       if (fb && !good) segs = null;                                                    // cắt dự phòng mà không nghe kiểm tra được: không tin
       if (fb && good && good.filter(Boolean).length < Math.ceil(segs.length / 2)) segs = null;   // lệch nhiều: coi như cắt hỏng
       if (!segs) {
+        DLAST.saved = 0; DLAST.half = 1; diag(DLAST);
         if (items.length === 1) throw { retry: true, msg: 'Không cắt được câu: ' + items[0].t.slice(0, 60) };
         var h = Math.ceil(items.length / 2);
         return doBatch(items.slice(0, h), voice, depth + 1).then(function () { return doBatch(items.slice(h), voice, depth + 1); });
@@ -283,11 +331,12 @@
         var b = mp3(pcm, w.rate);
         return loud(b).then(function (lv) {
           if (lv < 0.01) { G.failed[items[k].k] = items[k].t; G.msg = '⚠ Một câu ra file câm, sẽ thu lại: ' + items[k].t.slice(0, 50); return; }
-          ok++; return put('clips', items[k].k, { b: b, m: w.model, q: 2 });
+          ok++; return put('clips', items[k].k, { b: b, m: w.model, q: 2, v: good && good[k] ? 1 : 0 });
         });
-      })).then(function () { G.done += ok; G.saved = (G.saved || 0) + ok; draw(); });
+      })).then(function () { G.done += ok; G.saved = (G.saved || 0) + ok; DLAST.saved = ok; diag(DLAST); draw(); });
       });
     }, function (e) {
+      if (e && !e.logged) { e.logged = 1; diag({ t: Date.now(), n: items.length, mode: items[0].m, err: String((e && (e.msg || e.stop || e.message)) || e).slice(0, 160) }); }
       if (e && e.retry && (depth || 0) < 3) { G.err++; G.msg = e.msg; draw(); return new Promise(function (ok) { setTimeout(ok, 3000); }).then(function () { return doBatch(items, voice, (depth || 0) + 1); }); }
       if (e && e.retry) { items.forEach(function (x) { G.failed[x.k] = x.t; }); G.err++; G.msg = e.msg; draw(); return; }
       throw e;
@@ -301,7 +350,7 @@
     G.run = true; G.stop = false; G.pub = ''; G.msg = 'Đang chuẩn bị…'; draw();
     libs().then(function () { return get('meta', 'voice'); }).then(function (v) {
       if (v && v !== voice) return clear('clips').then(function () { return put('meta', 'published', null); });
-    }).then(function () { return put('meta', 'voice', voice); }).then(corpus).then(function (list) {
+    }).then(function () { return put('meta', 'voice', voice); }).then(corpus).then(function (list) { return verifyStored(list).then(function (nd) { if (nd) G.recheckDel = nd; return list; }); }).then(function (list) {
       G.list = list; G.total = list.length; return keys('clips');
     }).then(function (have) {
       var hv = {}; have.forEach(function (k) { hv[k] = 1; }); G.done = have.length;
@@ -463,7 +512,8 @@
         var n = gpacks.reduce(function (s, pk) { return s + pk.items.length; }, 0);
         return utf8b64(JSON.stringify({ voice: 'Gemini ' + VOICE, gemini: n, packs: packs })).then(function (b64) { G.pub = '⬆ Đang gửi danh mục giọng…'; draw(); return ghPost({ action: 'ghblob', data: b64 }); }).then(function (j) {
           files.push({ path: 'voice/index.json', sha: j.sha });
-          return ghPost({ action: 'ghcommit', files: files, message: 'Giọng Puck: ' + n + ' câu' });
+          return utf8b64(JSON.stringify({ at: new Date().toISOString(), ua: navigator.userAgent.slice(0, 120), log: LN._gemDiag() })).then(function (d64) { return ghPost({ action: 'ghblob', data: d64 }); }).then(function (jd) { files.push({ path: 'voice/diag.json', sha: jd.sha }); }, function () {})
+            .then(function () { return ghPost({ action: 'ghcommit', files: files, message: 'Giọng Puck: ' + n + ' câu' }); });
         }).then(function () { return put('meta', 'published', { packs: gpacks, at: Date.now() }); }).then(function () { G.pub = '✅ Đã đưa lên app ' + n + ' câu giọng Puck. Khoảng 1–2 phút nữa Vercel cập nhật xong, các bé tải lại trang là nghe giọng mới.'; G.pubN = n; });
       });
     }).catch(function (e) { G.pub = '❌ Chưa đưa lên được: ' + (e.message || e); }).then(function () { PUB = false; draw(); });
@@ -490,7 +540,7 @@
       '<p style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><button class="btn btn-lg btn-pink" id="gm-start" data-act="gm-start">🎙 Thu giọng Puck</button><button class="btn" data-act="gm-stop">⏸ Dừng</button><button class="btn btn-mint" data-act="gm-pub">⬆ Đưa lên app ngay</button>' +
       '<label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="gm-auto"' + (auto ? ' checked' : '') + '> Tự đưa lên app khi dừng</label></p>' +
       '<div id="gm-st" class="small"></div><div id="gm-gh" class="small"></div>' +
-      '<p class="small" style="margin-top:10px"><a href="#" data-act="gm-retry">↻ Gọi lại Google (bỏ đánh dấu hết lượt)</a> · <a href="#" data-act="gm-sample">▶ Nghe thử 6 câu</a> · <a href="#" data-act="gm-listen">🔊 Nghe 5 câu vừa thu</a> · <a href="#" data-act="gm-compare">🎧 So sánh giọng các mẫu</a> · <a href="#" data-act="gm-one">🎯 Chỉ giữ 1 mẫu</a> · <a href="#" data-act="gm-export">⬇ Tải file zip (dự phòng)</a></p></div>';
+      '<p class="small" style="margin-top:10px"><a href="#" data-act="gm-diag">📤 Gửi nhật ký thu giọng cho em</a> · <a href="#" data-act="gm-retry">↻ Gọi lại Google (bỏ đánh dấu hết lượt)</a> · <a href="#" data-act="gm-sample">▶ Nghe thử 6 câu</a> · <a href="#" data-act="gm-listen">🔊 Nghe 5 câu vừa thu</a> · <a href="#" data-act="gm-compare">🎧 So sánh giọng các mẫu</a> · <a href="#" data-act="gm-one">🎯 Chỉ giữ 1 mẫu</a> · <a href="#" data-act="gm-export">⬇ Tải file zip (dự phòng)</a></p></div>';
   };
   /* Các câu thu trước bản 36 (không có q:2) đều bị câm do lỗi đổi tần số của lamejs → xoá để thu lại */
   function purgeOld() {
@@ -512,7 +562,7 @@
     ghCheck(); draw();
   };
   LN.gemClick = function (a, ev) {
-    if (ev && ev.preventDefault && /gm-(sample|listen|export|compare|one|retry)/.test(a)) ev.preventDefault();
+    if (ev && ev.preventDefault && /gm-(sample|listen|export|compare|one|retry|diag)/.test(a)) ev.preventDefault();
     if (a === 'gm-start') start();
     else if (a === 'gm-stop') { G.stop = true; G.msg = 'Đang dừng sau lượt hiện tại…'; draw(); }
     else if (a === 'gm-sample') libs().then(sample);
@@ -521,10 +571,11 @@
     else if (a === 'gm-pub') publish();
     else if (a === 'gm-compare') libs().then(compare);
     else if (a === 'gm-one') keepOne();
+    else if (a === 'gm-diag') { G.pub = '⏳ Đang gửi nhật ký…'; draw(); utf8b64(JSON.stringify({ at: new Date().toISOString(), ua: navigator.userAgent.slice(0, 120), log: LN._gemDiag() })).then(function (d64) { return ghPost({ action: 'ghblob', data: d64 }); }).then(function (jd) { return ghPost({ action: 'ghcommit', files: [{ path: 'voice/diag.json', sha: jd.sha }], message: 'Nhật ký thu giọng' }); }).then(function () { G.pub = '✅ Đã gửi nhật ký thu giọng (' + LN._gemDiag().length + ' lượt) – nhắn em để em xem.'; draw(); }, function (e) { G.pub = '❌ Chưa gửi được nhật ký: ' + (e.message || e); draw(); }); }
     else if (a === 'gm-retry') { store.set('ln_note_gemq2', null); G.badModel = {}; G.msg = 'Đã bỏ đánh dấu hết lượt, đang gọi lại Google…'; draw(); start(); }
     else return false;
     return true;
   };
 })();
 ;
-(window.LN_V=window.LN_V||{})["gemgen.js"]="81814124";
+(window.LN_V=window.LN_V||{})["gemgen.js"]="9311536b";
