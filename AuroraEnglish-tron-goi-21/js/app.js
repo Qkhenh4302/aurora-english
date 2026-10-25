@@ -319,7 +319,7 @@
       if (Date.now() - (VP.lastEnd || 0) < 600) { CH.timer = setTimeout(go, 150); return; }   // nghỉ một nhịp sau khi đọc xong từ
       var e = vpHas(t, 'c'), ac = e && acx();
       if (e && ac && ac.state === 'running') {
-        vpBuf(e).then(function (buf) { if (!buf || buf.raw || speaking()) return; var s = ac.createBufferSource(); s.buffer = buf; var g = ac.createGain(); g.gain.value = 0.9; s.connect(g); g.connect(ac.destination); CH.src = s; s.start(0); }, function () {});
+        vpBuf(e).then(function (buf) { if (!buf || buf.raw || speaking()) return; var s = ac.createBufferSource(); s.buffer = buf; var g = ac.createGain(); g.gain.value = 0.9; s.connect(g); g.connect(fadeTo(ac, buf.duration)); CH.src = s; s.start(0); }, function () {});
       } else if (!e && serverTTS()) playTTS(t, 'c', null, function () {});
     };
     CH.timer = setTimeout(go, 1300);
@@ -504,6 +504,15 @@
       duck(true); var pr = a.play(); if (pr && pr.catch) pr.catch(function () { if (onfail) onfail(); });
     } catch (er) { if (onfail) onfail(); }
   }
+  /* làm nhỏ dần ở đầu/cuối mỗi câu khi phát: hết tiếng "xẹt" ở chỗ cắt (kể cả các câu đã thu từ trước) */
+  function fadeTo(ac, dur) {
+    try {
+      var g = ac.createGain(), t0 = ac.currentTime, fi = Math.min(0.012, dur / 4), fo = Math.min(0.04, dur / 4);
+      g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(1, t0 + fi);
+      g.gain.setValueAtTime(1, t0 + Math.max(fi, dur - fo)); g.gain.linearRampToValueAtTime(0, t0 + dur);
+      g.connect(ac.destination); return g;
+    } catch (e) { return ac.destination; }
+  }
   function vpPlay(t, m, onend, onfail) {
     var e = vpHas(t, m), ac = e && acx(); if (!e || !ac) return false;
     var tok = ++VP.tok; ttsBusy(true);
@@ -515,7 +524,7 @@
         dbg('PHÁT', t, 'audio=' + ac.state);
         var s = ac.createBufferSource(); s.buffer = buf;
         s.playbackRate.value = 1;   // giữ nguyên giọng gốc trên mọi máy (đổi tốc độ sẽ làm méo/lệch giọng)
-        s.connect(ac.destination);
+        s.connect(fadeTo(ac, buf.duration));
         s.onended = function () { VP.lastEnd = Date.now(); if (VP.src === s) { VP.src = null; duck(false); if (onend) onend(); } };
         VP.src = s; duck(true); s.start(0);
       };
@@ -2302,4 +2311,4 @@
   LN.boot = function () { route(); };
 })();
 ;
-(window.LN_V=window.LN_V||{})["app.js"]="b07d30b0";
+(window.LN_V=window.LN_V||{})["app.js"]="0606c337";

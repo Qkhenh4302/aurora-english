@@ -50,11 +50,31 @@
   function libs() { return Promise.all([loadLib('js/lame.min.js', function () { return !!window.lamejs; }), loadLib('js/jszip.min.js', function () { return !!window.JSZip; })]); }
 
   /* ---------- danh sách câu ---------- */
+  /* Dòng nào là câu tiếng Anh thật để Gemini đọc (bỏ chữ cái xáo trộn của trò chơi, dãy chữ rời, tiếng Việt, ký hiệu, câu có chỗ trống) */
+  function speakable(all) {
+    var words = {};
+    function addW(t) { String(t).toLowerCase().replace(/[^a-z' ]/g, ' ').split(/\s+/).forEach(function (w) { if (w) words[w] = 1; }); }
+    all.forEach(function (x) { if (/\s/.test(String(x.t).trim())) addW(x.t); });
+    try { Object.keys(LN.UNITSETS || {}).forEach(function (g) { (LN.UNITSETS[g] || []).forEach(function (u) { (u.vocab || []).forEach(function (v) { addW(v[0]); }); }); }); } catch (e) {}
+    return function (x) {
+      var t = String(x.t).trim();
+      if (!t || /[^\x00-\x7F’‘“”…—–]/.test(t)) return false;            // tiếng Việt, ✓ ✗ → · …
+      if (/[=<>{}\[\]|#*_~^]/.test(t)) return false;
+      if (/,\s*,/.test(t) || /\(\s*\)/.test(t)) return false;               // câu có chỗ trống
+      if (/^([a-z]\s+){3,}[a-z]\b/i.test(t)) return false;                   // dãy chữ cái rời
+      if (/^[a-z]{1,7}$/.test(t) && !words[t]) return false;                  // chữ cái xáo trộn (không có trong bài)
+      if (!/[a-z]{2}/i.test(t)) return false;
+      return true;
+    };
+  }
   function corpus() {
     return LN.loadAll().then(function () {
       var seen = {}, out = [];
-      LN.ttsCorpus().filter(function (x) { return !/\S\/\S/.test(x.t); }).concat(EXTRA).forEach(function (x) {
-        var k = LN.vpKey(x.m, x.t); if (seen[k]) return; seen[k] = 1; out.push({ t: x.t, m: x.m, k: k });
+      var all = LN.ttsCorpus().filter(function (x) { return !/\S\/\S/.test(x.t); }).concat(EXTRA), ok = speakable(all); G.skipped = 0;
+      all.forEach(function (x) {
+        var k = LN.vpKey(x.m, x.t); if (seen[k]) return; seen[k] = 1;
+        if (!ok(x)) { G.skipped++; return; }   // không phải câu tiếng Anh để đọc: giữ giọng cũ
+        out.push({ t: x.t, m: x.m, k: k });
       });
       return out;
     });
@@ -132,7 +152,10 @@
     var used = {}; cuts.forEach(function (g) { used[g[0]] = 1; });
     var minCut = Math.min.apply(null, cuts.map(function (g) { return g[2]; })), maxRest = Math.max.apply(null, G.filter(function (g) { return !used[g[0]]; }).map(function (g) { return g[2]; }).concat([0]));
     if (maxRest > minCut * 3) return null;
-    return segs.map(function (sg) { var x = Math.max(0, sg[0] * fr - Math.round(rate * 0.05)), y = Math.min(pcm.length, sg[1] * fr + Math.round(rate * 0.12)); return pcm.subarray(x, y); });
+    return segs.map(function (sg, q) {
+      var pre = q > 0 ? Math.floor(cuts[q - 1][2] / 2) * fr : Math.round(rate * 0.05), post = q < cuts.length ? Math.floor(cuts[q][2] / 2) * fr : Math.round(rate * 0.12);
+      var x = Math.max(0, sg[0] * fr - Math.min(Math.round(rate * 0.05), pre)), y = Math.min(pcm.length, sg[1] * fr + Math.min(Math.round(rate * 0.12), post)); return pcm.subarray(x, y);
+    });
   }
   LN._gemSplit = split; LN._gemSplit2 = split2; LN._gemParseWav = parseWav;
   /* Kiểm tra file mp3 vừa tạo có tiếng thật (giải mã lại và đo âm lượng lớn nhất 0..1) */
@@ -151,6 +174,10 @@
     var enc = new window.lamejs.Mp3Encoder(1, rate, KBPS), out = [], blk = 1152, i, b;
     var pad = new Int16Array(Math.round(rate * 0.03));
     var all = new Int16Array(pad.length + pcm.length + Math.round(rate * 0.08)); all.set(pad, 0); all.set(pcm, pad.length);
+    // làm nhỏ dần ở hai mép (hết tiếng "xẹt" ở chỗ cắt)
+    var fi = Math.min(Math.round(rate * 0.012), pcm.length >> 2), fo = Math.min(Math.round(rate * 0.035), pcm.length >> 2), j;
+    for (j = 0; j < fi; j++) all[pad.length + j] = Math.round(all[pad.length + j] * (0.5 - 0.5 * Math.cos(Math.PI * j / fi)));
+    for (j = 0; j < fo; j++) { var q = pad.length + pcm.length - 1 - j; all[q] = Math.round(all[q] * (0.5 - 0.5 * Math.cos(Math.PI * j / fo))); }
     for (i = 0; i < all.length; i += blk) { b = enc.encodeBuffer(all.subarray(i, i + blk)); if (b.length) out.push(new Uint8Array(b)); }
     b = enc.flush(); if (b.length) out.push(new Uint8Array(b));
     var len = out.reduce(function (s, x) { return s + x.length; }, 0), res = new Uint8Array(len), p = 0; out.forEach(function (x) { res.set(x, p); p += x.length; });
@@ -174,8 +201,7 @@
     var model = pickModel(); if (!model) return Promise.reject({ stop: 'Đã dùng hết lượt Gemini của Google trong ngày. Google làm mới lượt lúc ' + resetVN() + ' (giờ Việt Nam) – sau giờ đó mở trang này và bấm «Thu tiếp giọng Puck».' });
     G.model = model; G.req++; reqToday(1); perModel(model);
     var lines = items.map(function (x) { return x.t; }), mode = items[0].m;
-    var prompt = '### DIRECTOR\'S NOTES (do NOT read this section aloud)\n' + BSTYLE[mode] + '\nSpeak ONLY the ' + lines.length + ' lines under TRANSCRIPT, exactly as written, in order, each exactly once. Never speak these notes, the headings, or any numbers that are not in a line. ' +
-      'After EACH line stay completely silent for two full seconds. Inside a line, " — " means a second person answers: pause about half a second there.\n\n### TRANSCRIPT\n' + lines.join('\n');
+    var prompt = lines.join('\n\n');   // chỉ gửi đúng các câu cần đọc: không còn hướng dẫn để Gemini đọc nhầm
     return apiKey().then(function (key) {
       return fetch((LN._gemBase || 'https://generativelanguage.googleapis.com') + '/v1beta/models/' + model + ':generateContent', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } } }) });
     }).then(function (r) {
@@ -209,8 +235,14 @@
     return fetch(base + '/v1beta/models?pageSize=1000', { headers: { 'x-goog-api-key': key } }).then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) { var L = j && j.models && window.AIPROMPTS ? window.AIPROMPTS.rankModels(j.models) : []; TXT = L.length ? L.slice(0, 4) : ['gemini-3-flash-preview', 'gemini-2.5-flash']; return TXT; }, function () { TXT = ['gemini-3-flash-preview', 'gemini-2.5-flash']; return TXT; });
   }
+  var ONES = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'], TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+  function nw(n) { n = +n; if (n < 20) return ONES[n]; if (n < 100) return TENS[Math.floor(n / 10)] + (n % 10 ? ' ' + ONES[n % 10] : ''); if (n < 1000) return ONES[Math.floor(n / 100)] + ' hundred' + (n % 100 ? ' ' + nw(n % 100) : ''); return String(n); }
+  function num(t) {
+    return t.replace(/\b(\d{1,2}):(\d{2})\b/g, function (m, h, mi) { return nw(h) + (+mi === 0 ? " o'clock" : ' ' + (+mi < 10 ? 'oh ' + nw(mi) : nw(mi))); })
+      .replace(/\b(\d{1,3})(st|nd|rd|th)?\b/g, function (m, d) { return nw(d); }).replace(/o'clock/g, 'oclock');
+  }
   function simText(a, b) {
-    function nz(x) { return String(x || '').toLowerCase().replace(/[‘’ʼ`]/g, "'").replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim(); }
+    function nz(x) { return num(String(x || '').toLowerCase().replace(/[‘’ʼ`]/g, "'")).replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim(); }
     a = nz(a); b = nz(b); if (!a || !b) return 0; if (a === b) return 1;
     var m = a.length, n = b.length, prev = [], cur = [], i, j; for (j = 0; j <= n; j++) prev[j] = j;
     for (i = 1; i <= m; i++) { cur = [i]; for (j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1)); prev = cur; }
@@ -578,4 +610,4 @@
   };
 })();
 ;
-(window.LN_V=window.LN_V||{})["gemgen.js"]="9311536b";
+(window.LN_V=window.LN_V||{})["gemgen.js"]="6b8aaf69";
