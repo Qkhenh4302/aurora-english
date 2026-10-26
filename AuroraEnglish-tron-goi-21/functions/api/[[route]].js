@@ -20,6 +20,7 @@ export async function onRequest(ctx) {
   request.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
   headers['x-forwarded-for'] = request.headers.get('cf-connecting-ip') || headers['x-forwarded-for'] || '';
   headers['x-forwarded-host'] = url.host; headers.host = url.host;
+  if (+(request.headers.get('content-length') || 0) > 4500000) return new Response('{"error":"big"}', { status: 413, headers: { 'Content-Type': 'application/json' } });   // giống giới hạn của Vercel
   let body;
   if (request.method !== 'GET' && request.method !== 'HEAD') { const t = await request.text(); try { body = t ? JSON.parse(t) : undefined; } catch (e) { body = t; } }
   const req = { method: request.method, url: url.pathname + url.search, headers, query: Object.fromEntries(url.searchParams), body, on() {} };

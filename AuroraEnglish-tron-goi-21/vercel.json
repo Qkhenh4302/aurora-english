@@ -17,6 +17,15 @@
           "value": "no-cache"
         }
       ]
+    },
+    {
+      "source": "/voice/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        }
+      ]
     }
   ]
 }

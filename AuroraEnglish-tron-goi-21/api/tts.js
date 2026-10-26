@@ -103,7 +103,7 @@ async function gen(text, mode, gv) {
 
 /* giới hạn tạo mới khi học sinh nghe câu chưa có sẵn: tối đa 60 câu / giờ / máy (tránh tốn tiền nếu bị gọi bừa) */
 const HITS = new Map();
-function tooMany(ip) { const now = Date.now(), w = (HITS.get(ip) || []).filter((t) => now - t < 3600000); w.push(now); HITS.set(ip, w); if (HITS.size > 5000) HITS.clear(); return w.length > 60; }
+function tooMany(ip) { const now = Date.now(), w = (HITS.get(ip) || []).filter((t) => now - t < 3600000); w.push(now); HITS.set(ip, w); if (HITS.size > 5000) HITS.clear(); return w.length > 300; }   // cả lớp dùng chung một mạng wifi
 /* ===== Tạo giọng Gemini hàng loạt (chỉ cô / quản trị dùng): mỗi lượt đọc nhiều câu, nghỉ 2 giây giữa các câu ===== */
 const GVOICES = ['Zephyr','Puck','Charon','Kore','Fenrir','Leda','Orus','Aoede','Callirrhoe','Autonoe','Enceladus','Iapetus','Umbriel','Algieba','Despina','Erinome','Algenib','Rasalgethi','Laomedeia','Achernar','Alnilam','Schedar','Gacrux','Pulcherrima','Achird','Zubenelgenubi','Vindemiatrix','Sadachbia','Sadaltager','Sulafat'];
 const GMODELS = ['gemini-2.5-flash-preview-tts','gemini-2.5-flash-tts','gemini-3.8-flash-tts','gemini-3.8-flash-lite-tts','gemini-2.5-pro-preview-tts','gemini-2.5-pro-tts'];
@@ -115,7 +115,7 @@ const BSTYLE = {
 async function isAdmin(tok) {
   if (!tok || !/^[a-f0-9]{48}$/.test(tok)) return false;
   const [s] = await redis([['GET', 'ae:s:' + tok]]); if (!s) return false;
-  try { return JSON.parse(s).role !== 'student'; } catch (e) { return false; }
+  try { const o = JSON.parse(s); return o.role !== 'student' && !o.boot; } catch (e) { return false; }
 }
 async function gbatch(lines, mode, voice, model) {
   const n = lines.length;
@@ -165,7 +165,7 @@ async function ghHandler(b, res) {
   try {
     if (b.action === 'ghblob') { const j = await gh('POST', '/git/blobs', { content: String(b.data || ''), encoding: 'base64' }); res.status(200).json({ sha: j.sha }); return; }
     if (b.action === 'ghcommit') {
-      const files = (Array.isArray(b.files) ? b.files : []).filter((f) => f && /^voice\/[a-z0-9_.-]{1,40}$/i.test(f.path) && /^[a-f0-9]{40}$/.test(f.sha));
+      const files = (Array.isArray(b.files) ? b.files : []).filter((f) => f && /^voice\/[a-z0-9_-]{1,40}\.(bin|json)$/i.test(f.path) && /^[a-f0-9]{40}$/.test(f.sha));
       if (!files.length) { res.status(400).json({ error: 'files' }); return; }
       const ref = await gh('GET', '/git/ref/heads/' + GH.br), base = await gh('GET', '/git/commits/' + ref.object.sha);
       const tree = await gh('POST', '/git/trees', { base_tree: base.tree.sha, tree: files.map((f) => ({ path: (GH.dir ? GH.dir + '/' : '') + f.path, mode: '100644', type: 'blob', sha: f.sha })) });
@@ -212,6 +212,8 @@ module.exports = async (req, res) => {
     let buf = null, type = 'audio/wav';
     if (hit) { if (hit.slice(0, 4) === 'mp3:') { buf = Buffer.from(hit.slice(4), 'base64'); type = 'audio/mpeg'; } else buf = Buffer.from(hit, 'base64'); }
     if (!buf) {
+      const ip0 = String((req.headers && (req.headers['x-forwarded-for'] || '')) || '').split(',')[0] || 'x';
+      if (pre !== 'gem' && tooMany(ip0)) { res.setHeader('Cache-Control', 'no-store'); res.status(429).json({ error: 'busy' }); return; }   // giới hạn tạo giọng mới cho mọi kiểu giọng
       if (pre !== 'gem') {
         buf = await ggen(text, mode, pre); type = 'audio/mpeg';
         if (buf.length < 700000) await redis([['SET', rk, 'mp3:' + buf.toString('base64')]]);
@@ -219,7 +221,7 @@ module.exports = async (req, res) => {
         let done = false;
         const ip = String((req.headers && (req.headers['x-forwarded-for'] || '')) || '').split(',')[0] || 'x';
         if (tooMany(ip)) { res.setHeader('Cache-Control', 'no-store'); res.status(429).json({ error: 'busy' }); return; }
-        if (GKEY && !gv && Date.now() > CGBAD) {
+        if (GKEY && (!gv || gv === 'Puck') && Date.now() > CGBAD) {   // giọng Puck: dùng đường Google Cloud (nhanh, nhiều lượt) trước
           try { buf = await cgem(text, mode); type = 'audio/mpeg'; done = true; if (buf.length < 700000) await redis([['SET', rk, 'mp3:' + buf.toString('base64')]]); }
           catch (e) { if (!KEY) throw e; if (e.status === 403 || e.status === 400 || e.status === 404) CGBAD = Date.now() + 600000; }
         }

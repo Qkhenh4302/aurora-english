@@ -340,7 +340,8 @@
     var c = store.get('ln_oltc_' + id, null);
     if (c && c.v === meta.updated && c.T) return Promise.resolve(OL.normalize(c.T));
     if (!(LN.cloud && LN.cloud.api)) return Promise.reject(new Error('offline'));
-    return LN.cloud.api('olget', { id: id }).then(function (j) {
+    var tk0 = store.get('ln_cloud_tok', null) || ((store.get('ln_admin_session', null) || {}).tok);
+    return LN.cloud.api('olget', { id: id, token: tk0 }).then(function (j) {
       if (!j.test) throw new Error('empty');
       try { store.set('ln_oltc_' + id, { v: meta.updated, T: j.test }); } catch (e) {}
       return OL.normalize(j.test);
@@ -407,7 +408,7 @@
           doneNote: function () { return u.gv ? 'Cô đang xem thử nên kết quả không lưu.' : 'Đã chốt điểm và <b>gửi kết quả cho cô</b>. Bấm số câu sai để nhảy tới phần chữa. Muốn làm lại thì bấm <b>Làm lại từ đầu</b>.'; },
           onReset: function () { if (!confirm('Làm lại từ đầu? Bài đang làm sẽ được xoá (các lần đã nộp vẫn được giữ).')) return; store.del ? store.del(wk) : store.set(wk, null); OL.viewTest(id); }
         });
-      }, function (e) { var r = document.querySelector('main.olx'); if (r) r.innerHTML = '<div class="ol-shell"><div class="ol-empty">Chưa tải được đề (' + esc(e.message || e) + '). Kiểm tra mạng rồi tải lại trang nhé.</div></div>'; });
+      }, function (e) { var r = document.querySelector('main.olx'); if (r) r.innerHTML = '<div class="ol-shell"><div class="ol-empty">' + (e && e.message === 'notassigned' ? 'Đề này chưa được giao cho em. Hỏi cô nhé!' : e && e.message === 'session' ? 'Em đăng nhập lại rồi mở đề nhé.' : 'Chưa tải được đề (' + esc(e.message || e) + '). Kiểm tra mạng rồi tải lại trang nhé.') + '</div></div>'; });
     };
     if (!index().tests[id]) refreshIndex().then(go); else go();
   };
@@ -437,4 +438,4 @@
   };
 })();
 ;
-(window.LN_V=window.LN_V||{})["onluyen.js"]="403ed0a1";
+(window.LN_V=window.LN_V||{})["onluyen.js"]="f2c9d455";

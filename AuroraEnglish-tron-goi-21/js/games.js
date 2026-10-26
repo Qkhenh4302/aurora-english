@@ -433,7 +433,7 @@
     },
     view: function (g) {
       var hit = {}; g.list.forEach(function (o) { if (g.found[o.wd]) o.cells.forEach(function (c) { hit[c] = 1; }); });
-      var html = '<div class="ws" style="grid-template-columns:repeat(' + g.N + ', 1fr)">';
+      var html = '<div class="ws" style="grid-template-columns:repeat(' + g.N + ', minmax(0, 1fr))">';
       for (var y = 0; y < g.N; y++) for (var x = 0; x < g.N; x++) { var k = x + ',' + y; html += '<button type="button" class="wsc' + (hit[k] ? ' f' : '') + (g.start === k ? ' s' : '') + '" data-g="c:' + k + '">' + g.grid[y][x] + '</button>'; }
       html += '</div>';
       return { body: '<div class="row" style="align-items:flex-start;justify-content:center"><div class="card" style="flex:0 1 480px">' + html + '<p class="small muted center" style="margin-top:10px">Bấm chữ đầu, rồi bấm chữ cuối của từ (ngang, dọc hoặc chéo).</p></div>' +
@@ -770,8 +770,8 @@
   IMPL.categorize = {
     init: function (g) {
       var other = LN.unitOf(g.n === 1 ? 2 : g.n - 1), ow = other.vocab.map(function (v) { return { en: v[0], vi: v[1], pic: v[2] }; });
-      var mine = g.words.map(function (w) { return w.en; });
-      var a = shuffle(g.words).slice(0, 5), b = shuffle(ow.filter(function (w) { return mine.indexOf(w.en) < 0; })).slice(0, 5);
+      var own = (g.u.vocab || []).map(function (v) { return { en: v[0], vi: v[1], pic: v[2] }; }), mine = own.map(function (w) { return w.en; });   // chỉ lấy đúng từ của bài này (không lấy từ bù của bài khác)
+      var a = shuffle(own.length ? own : g.words).slice(0, 5), b = shuffle(ow.filter(function (w) { return mine.indexOf(w.en) < 0; })).slice(0, 5);
       g.groups = [{ name: 'Unit ' + g.n + ': ' + g.u.vi, icon: g.u.icon }, { name: 'Unit ' + other.n + ': ' + other.vi, icon: other.icon }];
       g.items = shuffle(a.map(function (w) { return { w: w, g: 0 }; }).concat(b.map(function (w) { return { w: w, g: 1 }; })));
       g.place = {}; g.sel = null; g.checked = false; g.total = g.items.length;
@@ -798,4 +798,4 @@
   };
 })();
 ;
-(window.LN_V=window.LN_V||{})["games.js"]="034fd0d0";
+(window.LN_V=window.LN_V||{})["games.js"]="95da3d9c";

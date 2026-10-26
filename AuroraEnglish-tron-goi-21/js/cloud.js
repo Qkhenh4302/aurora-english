@@ -17,7 +17,7 @@
       if (x === undefined) return y; if (y === undefined) return x;
       if (typeof x === 'number' && typeof y === 'number') return Math.max(x, y);
       if (typeof x === 'boolean' || typeof y === 'boolean') return !!(x || y);
-      if (Array.isArray(x) && Array.isArray(y)) { var seen = {}, out = []; x.concat(y).forEach(function (v) { var k = JSON.stringify(v); if (!seen[k]) { seen[k] = 1; out.push(v); } }); return out; }
+      if (Array.isArray(x) && Array.isArray(y)) { if (x.length === y.length && x.length <= 4 && x.concat(y).every(function (v) { return typeof v === 'number'; })) return x.map(function (v, i) { return Math.max(v, y[i]); }); var seen = {}, out = []; x.concat(y).forEach(function (v) { var k = JSON.stringify(v); if (!seen[k]) { seen[k] = 1; out.push(v); } }); return out; }
       if (isO(x) && isO(y)) { var o = {}; Object.keys(x).concat(Object.keys(y)).forEach(function (k) { if (!(k in o)) o[k] = deep(x[k], y[k]); }); return o; }
       return y;
     }
@@ -112,7 +112,7 @@
       jobs.push(api('prog', { token: st, updated: p.updated || Date.now(), data: p, sum: LN.progSummary ? LN.progSummary(p) : {} }).then(function (j) {
         var q4 = Q(); q4.prog = false; setQ(q4);
         if (j.prog && j.prog.data) quiet(function () { var cur = store.get('ln_prog_' + u, null), mg = mergeProg(cur, j.prog.data); if (!same(cur, mg)) raw.set.call(store, 'ln_prog_' + u, mg); });
-      }, function (e) { if (e.status === 401) { raw.del.call(store, 'ln_cloud_tok'); var q5 = Q(); q5.prog = false; setQ(q5); } throw e; }));
+      }, function (e) { if (e.status === 401 || (e.status === 404 && e.message === 'gone')) { raw.del.call(store, 'ln_cloud_tok'); var q5 = Q(); q5.prog = false; setQ(q5); } throw e; }));
     }
     if (!jobs.length) { badge(keys.length ? 'login' : 'ok'); return; }
     flushing = true; badge('wait');
@@ -247,4 +247,4 @@
   }
 })();
 ;
-(window.LN_V=window.LN_V||{})["cloud.js"]="682076c7";
+(window.LN_V=window.LN_V||{})["cloud.js"]="72840882";

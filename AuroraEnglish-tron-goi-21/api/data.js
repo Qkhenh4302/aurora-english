@@ -47,12 +47,12 @@ function mergeProg(a, b) {
       if (x === undefined) return y; if (y === undefined) return x;
       if (typeof x === 'number' && typeof y === 'number') return Math.max(x, y);
       if (typeof x === 'boolean' || typeof y === 'boolean') return !!(x || y);
-      if (Array.isArray(x) && Array.isArray(y)) { var seen = {}, out = []; x.concat(y).forEach(function (v) { var k = JSON.stringify(v); if (!seen[k]) { seen[k] = 1; out.push(v); } }); return out; }
+      if (Array.isArray(x) && Array.isArray(y)) { if (x.length === y.length && x.length <= 4 && x.concat(y).every(function (v) { return typeof v === 'number'; })) return x.map(function (v, i) { return Math.max(v, y[i]); }); var seen = {}, out = []; x.concat(y).forEach(function (v) { var k = JSON.stringify(v); if (!seen[k]) { seen[k] = 1; out.push(v); } }); return out; }
       if (isO(x) && isO(y)) { var o = {}; Object.keys(x).concat(Object.keys(y)).forEach(function (k) { if (!(k in o)) o[k] = deep(x[k], y[k]); }); return o; }
       return y;
     }
     var m = deep(a, b);
-    var lg = {}; m.log = (a.log || []).concat(b.log || []).filter(function (l) { var k = (l && l.t) + '|' + (l && (l.id || l.title)); if (lg[k]) return false; lg[k] = 1; return true; }).sort(function (x, y) { return (x.t || 0) - (y.t || 0); }).slice(-400);
+    var lg = {}; m.log = (Array.isArray(a.log) ? a.log : []).concat(Array.isArray(b.log) ? b.log : []).filter(function (l) { var k = (l && l.t) + '|' + (l && (l.id || l.title)); if (lg[k]) return false; lg[k] = 1; return true; }).sort(function (x, y) { return (x.t || 0) - (y.t || 0); }).slice(-400);
     m.updated = Math.max(+a.updated || 0, +b.updated || 0);
     return m;
   }
@@ -66,15 +66,22 @@ const J = (s, d) => { if (s == null) return d; try { return JSON.parse(s); } cat
 const tokenNew = () => crypto.randomBytes(24).toString('hex');
 async function session(tok) { if (!tok || !/^[a-f0-9]{48}$/.test(tok)) return null; const [s] = await redis([['GET', P + 's:' + tok]]); return J(s, null); }
 async function newSession(data, days) { const t = tokenNew(); await redis([['SET', P + 's:' + t, JSON.stringify(data), 'EX', String(Math.round(days * 86400))]]); return t; }
+function lhash(str) {   // giống LN.hash ở trình duyệt
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0, ch; i < str.length; i++) { ch = str.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
 function strip(rec) { const r = Object.assign({}, rec); delete r.pass; return r; }
 
 const FAILS = new Map();
-function tooMany(ip) { const now = Date.now(), w = (FAILS.get(ip) || []).filter((t) => now - t < 600000); FAILS.set(ip, w); return w.length >= 12; }
-function fail(ip) { const w = FAILS.get(ip) || []; w.push(Date.now()); FAILS.set(ip, w); if (FAILS.size > 5000) FAILS.clear(); }
+function tooMany(ip, user) { const now = Date.now(), k = ip + '|' + String(user || ''), w = (FAILS.get(k) || []).filter((t) => now - t < 600000), wi = (FAILS.get(ip) || []).filter((t) => now - t < 600000); FAILS.set(k, w); FAILS.set(ip, wi); return w.length >= 8 || wi.length >= 80; }
+function fail(ip, user) { const k = ip + '|' + String(user || ''); [k, ip].forEach((x) => { const w = FAILS.get(x) || []; w.push(Date.now()); FAILS.set(x, w); }); if (FAILS.size > 5000) FAILS.clear(); }
 
 async function adminRec(user) {
   const [a, t] = await redis([['GET', P + 'k:ln_admin'], ['GET', P + 'k:ln_teachers']]);
-  if (user === OWNER) { const o = J(a, null); return o && o.v === 3 && o.user === OWNER ? Object.assign({ role: 'owner' }, o) : { role: 'owner', user: OWNER, pass: OWNER_DEF_HASH }; }
+  if (user === OWNER) { const o = J(a, null); return o && o.v === 3 && o.user === OWNER ? Object.assign({ role: 'owner' }, o) : { role: 'owner', user: OWNER, pass: OWNER_DEF_HASH, def: true }; }
   const tl = J(t, []) || []; const x = tl.filter((r) => r && r.user === user)[0];
   return x ? Object.assign({ role: 'teacher' }, x) : null;
 }
@@ -84,30 +91,38 @@ async function dump() {
   const cmds = keys.map((k) => ['GET', P + 'k:' + k]).concat(plist.map((u) => ['GET', P + 'p:' + u]));
   if (!cmds.length) return out;
   const vals = await redis(cmds);
-  keys.forEach((k, i) => { out.keys[k] = J(vals[i], null); });
+  keys.forEach((k, i) => { out.keys[k] = noPass(k, J(vals[i], null)); });
   plist.forEach((u, i) => { const v = J(vals[keys.length + i], null); if (v) out.progs[u] = v; });
   return out;
 }
 
+// Chỉ nhận tài khoản thật (không lấy nhầm thuộc tính có sẵn của Object như __proto__, constructor…)
+const own = (o, k) => !!o && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, k) && /^[a-z0-9_]{1,40}$/.test(k);
+// Không gửi mã mật khẩu của chủ và giáo viên xuống trình duyệt (giáo viên khác đọc được sẽ đăng nhập thay chủ)
+function noPass(k, v) {
+  if (k === 'ln_admin' && v && typeof v === 'object') { const o = Object.assign({}, v); delete o.pass; return o; }
+  if (k === 'ln_teachers' && Array.isArray(v)) return v.map((t) => { if (!t || typeof t !== 'object') return t; const o = Object.assign({}, t); delete o.pass; return o; });
+  return v;
+}
 const OPS = {
   // Học sinh đăng nhập: so mã băm mật khẩu (trình duyệt tự tính), trả về hồ sơ + tiến độ
   async login(b, ip) {
-    if (tooMany(ip)) return [429, { error: 'Sai nhiều lần quá, đợi 10 phút rồi thử lại nhé.' }];
+    if (tooMany(ip, String(b.user||'').toLowerCase())) return [429, { error: 'Sai nhiều lần quá, đợi 10 phút rồi thử lại nhé.' }];
     const u = String(b.user || ''), [us] = await redis([['GET', P + 'k:ln_users']]); const all = J(us, {}) || {};
-    const rec = all[u];
-    if (!rec) { fail(ip); return [404, { error: 'notfound' }]; }
-    if (!b.hash || (rec.pass !== b.hash && rec.pass !== b.hash2)) { fail(ip); return [401, { error: 'badpass' }]; }
+    const rec = own(all, u) ? all[u] : null;
+    if (!rec || typeof rec !== 'object') { fail(ip, String(b.user||'').toLowerCase()); return [404, { error: 'notfound' }]; }
+    if (typeof b.hash !== 'string' || !b.hash || typeof rec.pass !== 'string' || !rec.pass || (rec.pass !== b.hash && !(typeof b.hash2 === 'string' && b.hash2 && rec.pass === b.hash2))) { fail(ip, String(b.user||'').toLowerCase()); return [401, { error: 'badpass' }]; }
     const token = await newSession({ u, role: 'student' }, 120);
     const [pv] = await redis([['GET', P + 'p:' + u]]);
     return [200, { token, user: strip(rec), prog: J(pv, null) }];
   },
   async register(b, ip) {
-    if (tooMany(ip)) return [429, { error: 'Thử lại sau ít phút nhé.' }];
+    if (tooMany(ip, String(b.user||'').toLowerCase())) return [429, { error: 'Thử lại sau ít phút nhé.' }];
     const [us, cl] = await redis([['GET', P + 'k:ln_users'], ['GET', P + 'k:ln_class']]);
     const all = J(us, {}) || {}, klass = J(cl, {}) || {}, u = String(b.user || ''), r = b.rec || {};
     if (!klass.allowReg) return [403, { error: 'Lớp chưa mở đăng ký. Tài khoản do giáo viên cấp.' }];
     if (!/^[a-z0-9_]{3,20}$/.test(u) || !r.pass || !r.name) return [400, { error: 'Thiếu thông tin.' }];
-    if (all[u]) return [409, { error: 'taken' }];
+    if (Object.prototype.hasOwnProperty.call(all, u)) return [409, { error: 'taken' }];
     all[u] = { name: String(r.name).slice(0, 60), grade: +r.grade || 4, pass: String(r.pass).slice(0, 40), mail: String(r.mail || '').slice(0, 80), created: Date.now(), last: Date.now() };
     await redis([['SET', P + 'k:ln_users', JSON.stringify(all)], ['SADD', P + 'keys', 'ln_users']]);
     const token = await newSession({ u, role: 'student' }, 120);
@@ -126,6 +141,13 @@ const OPS = {
     const [ix, t] = await redis([['GET', P + 'k:ln_ol'], ['GET', P + 'k:ln_olt_' + id]]);
     const meta = ((J(ix, {}) || {}).tests || {})[id];
     if (!meta || meta.status !== 'giao' || meta.del) return [404, { error: 'notfound' }];
+    // chỉ học sinh được giao đề (hoặc giáo viên) mới tải được đề
+    const s = await session(b.token); if (!s) return [401, { error: 'session' }];
+    if (s.role === 'student') {
+      const [us] = await redis([['GET', P + 'k:ln_users']]); const all = J(us, {}) || {}, rec = own(all, s.u) ? all[s.u] : null;
+      const ok = rec && (((meta.uh || []).indexOf(lhash('ol:' + s.u)) >= 0) || ((meta.grades || []).map(Number).indexOf(+rec.grade) >= 0));
+      if (!ok) return [403, { error: 'notassigned' }];
+    }
     return [200, { test: J(t, null) }];
   },
   // Học sinh xem điểm cô chấm lại (chỉ bài của chính mình)
@@ -146,7 +168,7 @@ const OPS = {
   },
   async me(b) {
     const s = await session(b.token); if (!s || s.role !== 'student') return [401, { error: 'session' }];
-    const [us, pv] = await redis([['GET', P + 'k:ln_users'], ['GET', P + 'p:' + s.u]]); const rec = (J(us, {}) || {})[s.u];
+    const [us, pv] = await redis([['GET', P + 'k:ln_users'], ['GET', P + 'p:' + s.u]]); const allU = J(us, {}) || {}, rec = own(allU, s.u) ? allU[s.u] : null;
     if (!rec) return [401, { error: 'gone' }];
     return [200, { user: strip(rec), prog: J(pv, null) }];
   },
@@ -155,7 +177,8 @@ const OPS = {
     const s = await session(b.token); if (!s || s.role !== 'student') return [401, { error: 'session' }];
     const body = JSON.stringify({ updated: +b.updated || Date.now(), data: b.data || {} });
     if (body.length > 900000) return [413, { error: 'big' }];
-    const [old] = await redis([['GET', P + 'p:' + s.u]]); const o = J(old, null);
+    const [old, us] = await redis([['GET', P + 'p:' + s.u], ['GET', P + 'k:ln_users']]); const o = J(old, null);
+    if (!own(J(us, {}) || {}, s.u)) return [404, { error: 'gone' }];   // tài khoản đã bị xoá: không ghi lại tiến độ
     const merged = mergeProg(o && o.data, b.data || {});   // gộp, không ghi đè: kết quả ở máy nào cũng được giữ
     const out = JSON.stringify({ updated: Math.max(+b.updated || 0, (o && +o.updated) || 0, Date.now()), data: merged });
     if (out.length > 900000) return [413, { error: 'big' }];
@@ -166,33 +189,48 @@ const OPS = {
   },
   async profile(b) {
     const s = await session(b.token); if (!s || s.role !== 'student') return [401, { error: 'session' }];
-    const [us] = await redis([['GET', P + 'k:ln_users']]); const all = J(us, {}) || {}; if (!all[s.u]) return [404, { error: 'gone' }];
+    const [us] = await redis([['GET', P + 'k:ln_users']]); const all = J(us, {}) || {}; if (!own(all, s.u)) return [404, { error: 'gone' }];
     if (b.name) all[s.u].name = String(b.name).slice(0, 60); if (b.mail != null) all[s.u].mail = String(b.mail).slice(0, 80);
     await redis([['SET', P + 'k:ln_users', JSON.stringify(all)]]); return [200, { ok: true }];
   },
   // Bảng xếp hạng: chỉ tên và số sao các bạn cùng lớp, không lộ thông tin khác
   async board(b) {
     const s = await session(b.token); if (!s) return [401, { error: 'session' }];
-    const [us, sums] = await redis([['GET', P + 'k:ln_users'], ['HGETALL', P + 'sum']]); const all = J(us, {}) || {}, me = all[s.u] || {};
+    const [us, sums] = await redis([['GET', P + 'k:ln_users'], ['HGETALL', P + 'sum']]); const all = J(us, {}) || {}, me = own(all, s.u) ? all[s.u] : {};
     const sm = {}; for (let i = 0; i < (sums || []).length; i += 2) sm[sums[i]] = J(sums[i + 1], {});
-    const list = Object.keys(all).filter((u) => all[u].status !== 'stopped' && +all[u].grade === +me.grade).map((u) => ({ un: u, name: all[u].name || u, stars: (sm[u] || {}).stars || 0, streak: (sm[u] || {}).streak || 0, prog: (sm[u] || {}).prog || 0 }));
+    const list = Object.keys(all).filter((u) => own(all, u) && all[u] && all[u].status !== 'stopped' && +all[u].grade === +me.grade).map((u) => ({ un: u, name: all[u].name || u, stars: (sm[u] || {}).stars || 0, streak: (sm[u] || {}).streak || 0, prog: (sm[u] || {}).prog || 0 }));
     return [200, { list }];
   },
   // Giáo viên đăng nhập: trả về toàn bộ dữ liệu lớp
   async alogin(b, ip) {
-    if (tooMany(ip)) return [429, { error: 'Sai nhiều lần, đợi 10 phút.' }];
+    if (tooMany(ip, String(b.user||'').toLowerCase())) return [429, { error: 'Sai nhiều lần, đợi 10 phút.' }];
     const u = String(b.user || '').toLowerCase(), rec = await adminRec(u);
-    if (!rec || rec.pass !== b.hash) { fail(ip); return [401, { error: 'badpass' }]; }
+    if (!rec || rec.pass !== b.hash) { fail(ip, String(b.user||'').toLowerCase()); return [401, { error: 'badpass' }]; }
+    // Mật khẩu mặc định (chưa đặt riêng): chỉ được đặt mật khẩu mới, chưa xem/ghi được dữ liệu lớp
+    if (rec.def) { const token = await newSession({ u, role: rec.role, boot: 1 }, 0.5); return [200, { token, role: rec.role, boot: 1, data: { keys: {}, progs: {} } }]; }
     const token = await newSession({ u, role: rec.role }, 0.5);
     return [200, { token, role: rec.role, data: await dump() }];
   },
-  async adump(b) { const s = await session(b.token); if (!s || s.role === 'student') return [401, { error: 'session' }]; return [200, { data: await dump() }]; },
+  // Giáo viên tự đổi mật khẩu/tên của mình (không ghi được cả danh sách giáo viên)
+  async apass(b, ip) {
+    const s = await session(b.token); if (!s || s.role !== 'teacher') return [401, { error: 'session' }];
+    if (tooMany(ip, s.u)) return [429, { error: 'Sai nhiều lần, đợi 10 phút.' }];
+    const [t] = await redis([['GET', P + 'k:ln_teachers']]); const tl = J(t, []) || [];
+    const x = Array.isArray(tl) ? tl.filter((r) => r && r.user === s.u)[0] : null; if (!x) return [404, { error: 'gone' }];
+    if (!x.must && (typeof b.old !== 'string' || b.old !== x.pass)) { fail(ip, s.u); return [401, { error: 'badpass' }]; }
+    if (typeof b.pass === 'string' && b.pass.length >= 8 && b.pass.length <= 40) x.pass = b.pass;
+    if (b.name) x.name = String(b.name).slice(0, 60); x.must = false;
+    await redis([['SET', P + 'k:ln_teachers', JSON.stringify(tl)], ['SADD', P + 'keys', 'ln_teachers']]);
+    return [200, { ok: true }];
+  },
+  async adump(b) { const s = await session(b.token); if (!s || s.role === 'student') return [401, { error: 'session' }]; if (s.boot) return [200, { data: { keys: {}, progs: {} } }]; return [200, { data: await dump() }]; },
   // Giáo viên lưu một mục dữ liệu (tài khoản, điểm danh, học phí, nhận xét, tiến độ học sinh…)
   async aput(b) {
     const s = await session(b.token); if (!s || s.role === 'student') return [401, { error: 'session' }];
     const items = (Array.isArray(b.items) ? b.items.slice(0, 200) : []).filter((it) => {
       const k = String(it.k || '');
       if ((k === 'ln_admin' || k === 'ln_teachers') && s.role !== 'owner') return false;
+      if (s.boot) return k === 'ln_admin' && it.v && typeof it.v === 'object' && typeof it.v.pass === 'string' && it.v.pass.length >= 8 && it.v.pass !== OWNER_DEF_HASH;
       return SHARED.test(k) || /^ln_prog_[a-z0-9_]{1,40}$/.test(k);
     });
     if (!items.length) return [200, { ok: true, n: 0, final: {} }];
@@ -215,8 +253,10 @@ const OPS = {
         if (del) { cmds.push(['DEL', P + 'k:' + k], ['SREM', P + 'keys', k]); final[k] = null; return; }
         let v = it.v;
         if (remote !== undefined && remote !== null && k !== 'ln_admin') v = ('b' in it) && it.b != null ? merge3(it.b, it.v, remote) : merge2(it.v, remote);
+        if (k === 'ln_admin' && v && typeof v === 'object' && !v.pass && remote && remote.pass) v = Object.assign({}, v, { pass: remote.pass });
+        if (k === 'ln_teachers' && Array.isArray(v) && Array.isArray(remote)) { const rp = {}; remote.forEach((t) => { if (t && t.user && t.pass) rp[t.user] = t.pass; }); v = v.map((t) => (t && t.user && !t.pass && rp[t.user] ? Object.assign({}, t, { pass: rp[t.user] }) : t)); }
         const str = JSON.stringify(v); if (str.length > 900000) return;
-        cmds.push(['SET', P + 'k:' + k, str], ['SADD', P + 'keys', k]); final[k] = v;
+        cmds.push(['SET', P + 'k:' + k, str], ['SADD', P + 'keys', k]); final[k] = noPass(k, v);
       } else {
         const u = k.slice(8), old = J(cur[i], null);
         if (del) { cmds.push(['DEL', P + 'p:' + u], ['SREM', P + 'plist', u], ['HDEL', P + 'sum', u]); return; }
@@ -225,6 +265,7 @@ const OPS = {
       }
     });
     if (cmds.length) await redis(cmds);
+    if (s.boot && final.ln_admin) await redis([['SET', P + 's:' + b.token, JSON.stringify({ u: s.u, role: s.role }), 'EX', '43200']]);   // đã đặt mật khẩu riêng → mở đầy đủ quyền
     return [200, { ok: true, n: cmds.length, final }];
     } finally { await redis(lockKeys.map((k) => ['DEL', k])).catch(() => {}); }
   }

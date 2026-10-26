@@ -8,7 +8,7 @@
   function adm() {
     var a = store.get('ln_admin', null);
     if (a && a.v === 3 && a.user === DEF_USER) return a;
-    return { v: 3, user: DEF_USER, name: (a && a.name && a.name !== 'Giáo viên') ? a.name : 'Quyên', pass: DEF_HASH, must: false };
+    return { v: 3, user: DEF_USER, name: (a && a.name && a.name !== 'Giáo viên') ? a.name : 'Quyên', pass: DEF_HASH, must: true };
   }
   function teachers() { return store.get('ln_teachers', []) || []; }
   /* Tài khoản đang đăng nhập: chủ (quản trị chính) hoặc giáo viên do chủ tạo */
@@ -18,10 +18,15 @@
     var t = teachers().filter(function (x) { return x.user === s.user; })[0];
     return t ? Object.assign({ role: 'teacher' }, t) : null;
   }
-  function saveAcc(acc) {
+  function saveAcc(acc, oldH) {
     var c = Object.assign({}, acc); delete c.role;
     if (acc.role === 'owner') { c.v = 3; store.set('ln_admin', c); }
-    else { var l = teachers().map(function (x) { return x.user === c.user ? c : x; }); store.set('ln_teachers', l); }
+    else {
+      var l = teachers().map(function (x) { return x.user === c.user ? c : x; }); store.set('ln_teachers', l);
+      // Giáo viên không được ghi cả danh sách giáo viên: gửi riêng mật khẩu/tên của chính mình lên máy chủ
+      var ss = store.get('ln_admin_session', null);
+      if (LN.cloud && LN.cloud.on && LN.cloud.api && ss && ss.tok) LN.cloud.api('apass', { token: ss.tok, old: oldH || '', pass: c.pass || '', name: c.name || '' }).catch(function () { toast('Chưa lưu được mật khẩu lên mạng — thử lại khi có mạng nhé.'); });
+    }
   }
   function authed() {
     var s = store.get('ln_admin_session', null);
@@ -44,7 +49,7 @@
     var overall = units.length ? Math.round(units.reduce(function (a, x) { return a + x.s.pct; }, 0) / units.length) : 0;
     var right = 0, total = 0, games = 0;
     p.log.forEach(function (l) { if (l.t < since) return; if (l.game) { games++; return; } right += l.right; total += l.total; });
-    var topics = Object.keys(p.topics).map(function (t) { var r = p.topics[t]; return { id: t, name: LN.topicName(t), r: r[0], n: r[1], acc: pct(r[0], r[1]) }; }).filter(function (x) { return x.n > 0; }).sort(function (a, b) { return b.acc - a.acc; });
+    var topics = Object.keys(p.topics).map(function (t) { var r = p.topics[t] || [0, 0], rn = Math.max(0, +r[1] || 0), rr = Math.min(rn, Math.max(0, +r[0] || 0)); return { id: t, name: LN.topicName(t), r: rr, n: rn, acc: pct(rr, rn) }; }).filter(function (x) { return x.n > 0; }).sort(function (a, b) { return b.acc - a.acc; });
     var ms = LN.openMistakes(p).filter(function (m) { return EX[m.exId]; }), mby = {};
     ms.forEach(function (m) { var t = EX[m.exId].ex.topic; mby[t] = (mby[t] || 0) + 1; });
     var answered = 0, activeDays = 0, dk = [];
@@ -81,7 +86,7 @@
     if (/^(grammar|ai|data|account|roster)$/.test(active)) active = 'caidat';
     function nl(id, href, icon, label) { return '<a href="' + href + '" class="' + (active === id ? 'on' : '') + '">' + ic(icon, 19) + label + '</a>'; }
     LN.render('<div class="adm"><aside class="aside"><a class="brand" href="#/admin">' + LN.logo(36) + '<span class="bname">Aurora <b>English</b></span></a>' +
-      '<span class="aver">Bản cập nhật 50 · 26/10</span><span class="lb">Quản lý</span>' + nl('lop', '#/admin', 'users', 'Lớp học') + nl('hocphi', '#/admin/hocphi', 'money', 'Học phí') + nl('home', '#/admin/tiendo', 'chart', 'Tiến độ học app') + nl('baitap', '#/admin/baitap', 'book', 'Làm bài & sửa bài') + nl('onluyen', '#/admin/onluyen', 'book', '📝 Ôn luyện đề') + nl('ai', '#/admin/ai', 'sound', '🔊 Giọng đọc & AI') + nl('caidat', '#/admin/caidat', 'key', 'Cài đặt') +
+      '<span class="aver">Bản cập nhật 51 · 26/10</span><span class="lb">Quản lý</span>' + nl('lop', '#/admin', 'users', 'Lớp học') + nl('hocphi', '#/admin/hocphi', 'money', 'Học phí') + nl('home', '#/admin/tiendo', 'chart', 'Tiến độ học app') + nl('baitap', '#/admin/baitap', 'book', 'Làm bài & sửa bài') + nl('onluyen', '#/admin/onluyen', 'book', '📝 Ôn luyện đề') + nl('ai', '#/admin/ai', 'sound', '🔊 Giọng đọc & AI') + nl('caidat', '#/admin/caidat', 'key', 'Cài đặt') +
       '<span class="lb">Khác</span><a href="#/">' + ic('eye', 19) + 'Mở trang học sinh</a><a href="#" data-act="a-logout">' + ic('out', 19) + 'Đăng xuất' + (cur() ? ' (' + esc(cur().user) + ')' : '') + '</a></aside>' +
       '<main class="amain">' + staleWarn() + body + '</main></div>');
   }
@@ -124,9 +129,9 @@
       ev.preventDefault(); var d = new FormData(ev.target), nw = String(d.get('new') || '');
       if (nw.length < 8) return viewForceChange('Mật khẩu mới cần ít nhất 8 ký tự.');
       if (nw !== d.get('new2')) return viewForceChange('Hai lần nhập chưa khớp.');
-      var a = cur(); if (a.pass === LN.hash('admin:' + a.user + ':' + nw)) return viewForceChange('Hãy chọn mật khẩu khác mật khẩu được cấp.');
+      var a = cur(), oldP = a.pass; if (a.pass && a.pass === LN.hash('admin:' + a.user + ':' + nw)) return viewForceChange('Hãy chọn mật khẩu khác mật khẩu được cấp.');
       a.pass = LN.hash('admin:' + a.user + ':' + nw); a.must = false; a.name = String(d.get('name') || '').trim() || a.name;
-      saveAcc(a); toast('Đã lưu mật khẩu mới'); LN.go('#/admin');
+      saveAcc(a, oldP); toast('Đã lưu mật khẩu mới'); LN.go('#/admin');
     });
   }
 
@@ -176,12 +181,12 @@
     if (!LN.users()[un]) { LN.go('#/admin'); return; }
     var s = summary(un, 0), s7 = summary(un, 7), note = store.get('ln_note_' + un, '');
     var top = s.mistakes.slice().sort(function (a, b) { return b.n - a.n; }).slice(0, 6);
-    var body = '<p class="small muted"><a href="#/admin">Tổng quan lớp</a> · Học sinh</p>' +
+    var body = '<p class="small muted"><a href="#/admin/tiendo">Tiến độ học sinh</a> · Học sinh</p>' +
       '<div class="card" style="display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin:10px 0 16px"><span class="ava" style="width:64px;height:64px;font-size:28px">' + esc((s.u.name || '?').trim().split(/\s+/).pop().charAt(0)) + '</span>' +
       '<div style="flex:1 1 260px"><h1 style="font-size:30px">' + esc(s.u.name) + '</h1><p class="muted small">@' + esc(un) + ' · ' + LN.gradeName(s.u.grade) + ' · phụ huynh: ' + esc(s.u.mail || '—') + ' · tạo ngày ' + fmtD(s.u.created) + ' · học lần cuối ' + ago(s.last) + '</p></div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-pink" href="#/admin/report/' + encodeURIComponent(un) + '">' + ic('img', 18) + 'Phiếu báo cáo (ảnh)</a><button class="btn" data-act="a-resetpw" data-u="' + esc(un) + '">' + ic('key', 17) + 'Đặt lại mật khẩu</button><button class="btn" data-act="a-del" data-u="' + esc(un) + '">' + ic('trash', 17) + 'Xoá</button></div></div>' +
       '<div class="row" style="margin-bottom:16px">' +
-      '<div class="stat"><p class="k">Tiến độ chung</p><p class="v">' + s.overall + '%</p></div><div class="stat"><p class="k">Unit hoàn thành</p><p class="v">' + s.unitsDone + '/20</p></div>' +
+      '<div class="stat"><p class="k">Tiến độ chung</p><p class="v">' + s.overall + '%</p></div><div class="stat"><p class="k">Unit hoàn thành</p><p class="v">' + s.unitsDone + '/' + s.units.length + '</p></div>' +
       '<div class="stat"><p class="k">Độ chính xác</p><p class="v" style="color:' + accCol(s.acc) + '">' + (s.acc == null ? '—' : s.acc + '%') + '</p></div><div class="stat"><p class="k">Câu đã làm</p><p class="v">' + s.answered + '</p></div>' +
       '<div class="stat"><p class="k">Học tuần này</p><p class="v">' + s7.activeDays + '/7 ngày</p></div><div class="stat"><p class="k">Sao · chuỗi ngày</p><p class="v">⭐' + s.stars + ' · 🔥' + s.streak + '</p></div></div>' +
       '<div class="row" style="margin-bottom:16px;align-items:flex-start"><div class="card grow"><div class="chead"><h2>Tiến độ ' + s.units.length + ' Unit</h2>' + (s.cur ? '<span class="tag tag-pink">Đang học Unit ' + s.cur.n + '</span>' : '<span class="tag tag-mint">Xong cả ' + s.units.length + ' Unit</span>') + '</div><div class="ugrid">' +
@@ -452,11 +457,19 @@
         '<div class="two"><div class="field"><label for="t-user">Tên đăng nhập</label><input class="inp" id="t-user" name="user" placeholder="colan" autocapitalize="none"></div><div class="field"><label for="t-pass">Mật khẩu cấp lần đầu</label><input class="inp" id="t-pass" name="pass" placeholder="ít nhất 8 ký tự"></div></div>' +
         '<button class="btn btn-yel" type="submit">' + ic('plus', 17) + 'Tạo tài khoản giáo viên</button></form></div>' : '') + '</div>');
     document.getElementById('f-acc').addEventListener('submit', function (ev) {
-      ev.preventDefault(); var d = new FormData(ev.target), a2 = cur();
-      if (a2.pass !== LN.hash('admin:' + a2.user + ':' + String(d.get('old') || ''))) return viewAccount({ msg: 'Mật khẩu hiện tại chưa đúng.' });
+      ev.preventDefault(); var d = new FormData(ev.target), a2 = cur(), oldH = LN.hash('admin:' + a2.user + ':' + String(d.get('old') || ''));
+      if (!a2.pass && LN.cloud && LN.cloud.on && LN.cloud.api) {   // mật khẩu không còn lưu trên máy: hỏi máy chủ xem mật khẩu hiện tại có đúng không
+        var sbt = ev.target.querySelector('button[type=submit]'); if (sbt) sbt.disabled = true;
+        LN.cloud.api('alogin', { user: a2.user, hash: oldH }).then(function () { a2.pass = oldH; go2(); }, function (e) { viewAccount({ msg: e.status === 429 ? e.message : 'Mật khẩu hiện tại chưa đúng.' }); });
+        return;
+      }
+      if (a2.pass !== oldH) return viewAccount({ msg: 'Mật khẩu hiện tại chưa đúng.' });
+      go2();
+      function go2() {
       var nw = String(d.get('new') || '');
       if (nw) { if (nw.length < 8) return viewAccount({ msg: 'Mật khẩu mới cần ít nhất 8 ký tự.' }); if (nw !== d.get('new2')) return viewAccount({ msg: 'Hai lần nhập mật khẩu mới chưa khớp.' }); a2.pass = LN.hash('admin:' + a2.user + ':' + nw); }
-      a2.name = String(d.get('name') || '').trim() || a2.name; a2.must = false; saveAcc(a2); viewAccount({ ok: true, msg: 'Đã lưu.' });
+      a2.name = String(d.get('name') || '').trim() || a2.name; a2.must = false; saveAcc(a2, oldH); viewAccount({ ok: true, msg: 'Đã lưu.' });
+      }
     });
     var ft = document.getElementById('f-tch');
     if (ft) ft.addEventListener('submit', function (ev) {
@@ -1035,4 +1048,4 @@
   };
 })();
 ;
-(window.LN_V=window.LN_V||{})["admin.js"]="fcc5191e";
+(window.LN_V=window.LN_V||{})["admin.js"]="e9c29188";

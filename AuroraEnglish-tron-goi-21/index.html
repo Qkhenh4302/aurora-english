@@ -531,6 +531,7 @@ h1, h2, h3, .head { font-family: var(--head); font-weight: 700; line-height: 1.2
 .ws { display: grid; gap: 4px; }
 .wsc { aspect-ratio: 1; border: 2px solid var(--line); border-radius: 9px; background: #fff; font-family: var(--head); font-size: 20px; font-weight: 800; padding: 0; }
 .wsc:hover { border-color: var(--pink-mid); }
+@media (max-width: 480px) { .ws { gap: 2px; } .wsc { font-size: 15px; border-radius: 6px; border-width: 1.5px; min-width: 0; } }
 .wsc.s { background: var(--yel); border-color: var(--yel-dk); }
 .wsc.f { background: var(--mint-soft); border-color: var(--mint); color: var(--mint-dk); }
 .wsw { padding: 8px 0; border-bottom: 2px dashed var(--line); }
@@ -1718,6 +1719,7 @@ table.sh { border-collapse: separate; border-spacing: 0; font-size: 14px; width:
 /* đang tải giọng AI */
 .ld{position:relative;animation:ldp 1s ease-in-out infinite}
 @keyframes ldp{0%,100%{opacity:1}50%{opacity:.45}}
+.gvtools .btn { max-width: 100%; white-space: normal; text-align: left; }
 
 /* ===================== Đại chiến quái vật (monster) ===================== */
 .monster-wrap { max-width: 820px; }
@@ -2293,7 +2295,7 @@ table.sh { border-collapse: separate; border-spacing: 0; font-size: 14px; width:
 </style>
 </head>
 <body>
-<div id="app"><p style="padding:40px;font-family:sans-serif">Đang tải Aurora English… (lần đầu có thể mất vài giây)</p></div><script>window.LN_EXPECT={"data.js": "986158f1", "units4.js": "87455823", "grammar_data.js": "73e60e5a", "explain4.js": "fbce3e67", "art.js": "bbf5baf7", "ex_fixes.js": "b02f497d", "app.js": "0bc9fddd", "games.js": "034fd0d0", "games_a.js": "fee8a804", "games_b.js": "e92d6ae3", "ai_prompts.js": "d75dd9c6", "ai.js": "2a2d5128", "cloud.js": "682076c7", "importer.js": "61229f68", "onluyen.js": "403ed0a1", "admin.js": "fcc5191e", "gemgen.js": "05ba7ac2", "qr_lib.js": "9fc6651e", "lop_core.js": "b88675ae", "lop_seed.js": "75f3f55b", "admin_lop.js": "6ff16d96", "ol_sample.js": "93fb9ddd", "onluyen_admin.js": "32a1f211"};window.LN_VPV="1ea29492";window.LN_LAZY={"1": ["js/units1.js?v=1729eee9"], "2": ["js/units1.js?v=1729eee9", "js/units3.js?v=dbd39687", "js/units2.js?v=60e7f633"], "3": ["js/units3.js?v=dbd39687"], "101": ["js/art_eu1.js?v=dc79dec9", "js/units_eu1.js?v=f7682d75"], "102": ["js/art_eu1.js?v=dc79dec9", "js/art_eu2.js?v=84a963e1", "js/units_eu2.js?v=06b377f9"]};window.__lnErr=function(s){var a=document.getElementById("app");if(a&&!window.__lnOk)a.innerHTML="<p style=\"padding:40px;font-family:sans-serif\">Không tải được tệp: "+String(s).split("/").pop()+"<br>Kiểm tra mạng rồi bấm F5 để tải lại.</p>";};window.addEventListener("error",function(e){if(!window.__lnOk&&e&&e.message)__lnErr("lỗi: "+e.message);});</script>
+<div id="app"><p style="padding:40px;font-family:sans-serif">Đang tải Aurora English… (lần đầu có thể mất vài giây)</p></div><script>window.LN_EXPECT={"data.js": "986158f1", "units4.js": "87455823", "grammar_data.js": "73e60e5a", "explain4.js": "fbce3e67", "art.js": "bbf5baf7", "ex_fixes.js": "b02f497d", "app.js": "31d895c2", "games.js": "95da3d9c", "games_a.js": "fee8a804", "games_b.js": "e92d6ae3", "ai_prompts.js": "d75dd9c6", "ai.js": "2a2d5128", "cloud.js": "72840882", "importer.js": "61229f68", "onluyen.js": "f2c9d455", "admin.js": "e9c29188", "gemgen.js": "05ba7ac2", "qr_lib.js": "9fc6651e", "lop_core.js": "b88675ae", "lop_seed.js": "75f3f55b", "admin_lop.js": "6ff16d96", "ol_sample.js": "93fb9ddd", "onluyen_admin.js": "32a1f211"};window.LN_VPV="1ea29492";window.LN_LAZY={"1": ["js/units1.js?v=1729eee9"], "2": ["js/units1.js?v=1729eee9", "js/units3.js?v=dbd39687", "js/units2.js?v=60e7f633"], "3": ["js/units3.js?v=dbd39687"], "101": ["js/art_eu1.js?v=dc79dec9", "js/units_eu1.js?v=f7682d75"], "102": ["js/art_eu1.js?v=dc79dec9", "js/art_eu2.js?v=84a963e1", "js/units_eu2.js?v=06b377f9"]};window.__lnErr=function(s){var a=document.getElementById("app");if(a&&!window.__lnOk)a.innerHTML="<p style=\"padding:40px;font-family:sans-serif\">Không tải được tệp: "+String(s).split("/").pop()+"<br>Kiểm tra mạng rồi bấm F5 để tải lại.</p>";};window.addEventListener("error",function(e){if(!window.__lnOk&&e&&e.message)__lnErr("lỗi: "+e.message);});</script>
 <noscript><p style="padding:40px">Trang này cần bật JavaScript.</p></noscript>
 <script src="js/data.js?v=986158f1" onerror="__lnErr(this.src)"></script>
 <script src="js/units4.js?v=87455823" onerror="__lnErr(this.src)"></script>
@@ -2301,16 +2303,16 @@ table.sh { border-collapse: separate; border-spacing: 0; font-size: 14px; width:
 <script src="js/explain4.js?v=fbce3e67" onerror="__lnErr(this.src)"></script>
 <script src="js/art.js?v=bbf5baf7" onerror="__lnErr(this.src)"></script>
 <script src="js/ex_fixes.js?v=b02f497d" onerror="__lnErr(this.src)"></script>
-<script src="js/app.js?v=0bc9fddd" onerror="__lnErr(this.src)"></script>
-<script src="js/games.js?v=034fd0d0" onerror="__lnErr(this.src)"></script>
+<script src="js/app.js?v=31d895c2" onerror="__lnErr(this.src)"></script>
+<script src="js/games.js?v=95da3d9c" onerror="__lnErr(this.src)"></script>
 <script src="js/games_a.js?v=fee8a804" onerror="__lnErr(this.src)"></script>
 <script src="js/games_b.js?v=e92d6ae3" onerror="__lnErr(this.src)"></script>
 <script src="js/ai_prompts.js?v=d75dd9c6" onerror="__lnErr(this.src)"></script>
 <script src="js/ai.js?v=2a2d5128" onerror="__lnErr(this.src)"></script>
-<script src="js/cloud.js?v=682076c7" onerror="__lnErr(this.src)"></script>
+<script src="js/cloud.js?v=72840882" onerror="__lnErr(this.src)"></script>
 <script src="js/importer.js?v=61229f68" onerror="__lnErr(this.src)"></script>
-<script src="js/onluyen.js?v=403ed0a1" onerror="__lnErr(this.src)"></script>
-<script src="js/admin.js?v=fcc5191e" onerror="__lnErr(this.src)"></script>
+<script src="js/onluyen.js?v=f2c9d455" onerror="__lnErr(this.src)"></script>
+<script src="js/admin.js?v=e9c29188" onerror="__lnErr(this.src)"></script>
 <script src="js/gemgen.js?v=05ba7ac2" onerror="__lnErr(this.src)"></script>
 <script src="js/qr_lib.js?v=9fc6651e" onerror="__lnErr(this.src)"></script>
 <script src="js/lop_core.js?v=b88675ae" onerror="__lnErr(this.src)"></script>
