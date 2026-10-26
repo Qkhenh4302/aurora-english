@@ -62,7 +62,9 @@
       if (/[=<>{}\[\]|#*_~^]/.test(t)) return false;
       if (/,\s*,/.test(t) || /\(\s*\)/.test(t)) return false;               // câu có chỗ trống
       if (/^([a-z]\s+){3,}[a-z]\b/i.test(t)) return false;                   // dãy chữ cái rời
-      if (/^[a-z]{1,7}$/.test(t) && !words[t]) return false;                  // chữ cái xáo trộn (không có trong bài)
+      if (/^[a-z]+$/i.test(t) && !words[t.toLowerCase()]) return false;        // chữ cái xáo trộn (không có trong bài)
+      if (/\b[a-z]+\d*:[a-z0-9]/i.test(t)) return false;                     // mã hình kiểu img2:u1
+      if (/^[A-Z][a-z]{0,12}:\s/.test(t) || /(^|\s)[A-Z]:(\s|$)/.test(t)) return false;   // có tên người nói ở đầu (Mai: …, A: … B:)
       if (!/[a-z]{2}/i.test(t)) return false;
       return true;
     };
@@ -170,7 +172,23 @@
     });
   }
   LN._gemLoud = loud;
+  /* bỏ mẩu tiếng xì ngắn đứng tách riêng ở đầu/cuối đoạn (giống bộ lọc khi phát trong app) */
+  function dropFrag(pcm, rate) {
+    var fr = Math.round(rate * 0.01), nf = Math.floor(pcm.length / fr), e = new Float32Array(nf), i, j;
+    for (i = 0; i < nf; i++) { var s0 = 0; for (j = i * fr; j < (i + 1) * fr; j += 2) s0 += pcm[j] * pcm[j]; e[i] = Math.sqrt(s0 / (fr / 2)); }
+    var srt = Array.prototype.slice.call(e).sort(function (a, b) { return a - b; }), hi = srt.slice(Math.floor(nf * 0.6)), med = hi.length ? hi[Math.floor(hi.length / 2)] : 0;
+    var thr = Math.max(150, med * 0.08), runs = [], st = -1;
+    for (i = 0; i < nf; i++) { if (e[i] > thr) { if (st < 0) st = i; } else if (st >= 0) { runs.push([st, i]); st = -1; } }
+    if (st >= 0) runs.push([st, nf]);
+    var a = 0, b = pcm.length;
+    if (runs.length >= 2) {
+      if (runs[0][1] - runs[0][0] <= 8 && runs[1][0] - runs[0][1] >= 15) a = Math.max(0, (runs[1][0] - 3) * fr);
+      var L = runs.length; if (runs[L - 1][1] - runs[L - 1][0] <= 8 && runs[L - 1][0] - runs[L - 2][1] >= 18) b = Math.min(pcm.length, (runs[L - 2][1] + 8) * fr);
+    }
+    return b - a > rate * 0.15 ? pcm.subarray(a, b) : pcm;
+  }
   function mp3(pcm, rate) {
+    pcm = dropFrag(pcm, rate);
     var enc = new window.lamejs.Mp3Encoder(1, rate, KBPS), out = [], blk = 1152, i, b;
     var pad = new Int16Array(Math.round(rate * 0.03));
     var all = new Int16Array(pad.length + pcm.length + Math.round(rate * 0.08)); all.set(pad, 0); all.set(pcm, pad.length);
@@ -610,4 +628,4 @@
   };
 })();
 ;
-(window.LN_V=window.LN_V||{})["gemgen.js"]="6b8aaf69";
+(window.LN_V=window.LN_V||{})["gemgen.js"]="05ba7ac2";

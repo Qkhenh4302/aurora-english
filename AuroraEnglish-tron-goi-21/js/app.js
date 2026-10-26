@@ -319,7 +319,7 @@
       if (Date.now() - (VP.lastEnd || 0) < 600) { CH.timer = setTimeout(go, 150); return; }   // nghỉ một nhịp sau khi đọc xong từ
       var e = vpHas(t, 'c'), ac = e && acx();
       if (e && ac && ac.state === 'running') {
-        vpBuf(e).then(function (buf) { if (!buf || buf.raw || speaking()) return; var s = ac.createBufferSource(); s.buffer = buf; var g = ac.createGain(); g.gain.value = 0.9; s.connect(g); g.connect(fadeTo(ac, buf.duration)); CH.src = s; s.start(0); }, function () {});
+        vpBuf(e).then(function (buf) { if (!buf || buf.raw || speaking()) return; var s = ac.createBufferSource(); s.buffer = buf; var g = ac.createGain(); g.gain.value = 0.9; s.connect(g); var tr = edgeTrim(buf); g.connect(fadeTo(ac, tr[1] - tr[0])); CH.src = s; s.start(0, tr[0], tr[1] - tr[0]); }, function () {});
       } else if (!e && serverTTS()) playTTS(t, 'c', null, function () {});
     };
     CH.timer = setTimeout(go, 1300);
@@ -505,6 +505,26 @@
     } catch (er) { if (onfail) onfail(); }
   }
   /* làm nhỏ dần ở đầu/cuối mỗi câu khi phát: hết tiếng "xẹt" ở chỗ cắt (kể cả các câu đã thu từ trước) */
+  /* Bỏ mẩu tiếng xì ngắn đứng tách riêng ở đầu (hoặc cuối) câu – sinh ra khi Gemini đọc liền nhiều câu rồi cắt ra */
+  function edgeTrim(buf) {
+    if (buf._tr) return buf._tr;
+    var out = [0, buf.duration];
+    try {
+      var d = buf.getChannelData(0), sr = buf.sampleRate, fr = Math.round(sr * 0.01), nf = Math.floor(d.length / fr), e = new Float32Array(nf), i, j;
+      for (i = 0; i < nf; i++) { var s0 = 0; for (j = i * fr; j < (i + 1) * fr; j += 2) s0 += d[j] * d[j]; e[i] = Math.sqrt(s0 / (fr / 2)); }
+      var srt = Array.prototype.slice.call(e).sort(function (a, b) { return a - b; }), hi = srt.slice(Math.floor(nf * 0.6)), med = hi.length ? hi[Math.floor(hi.length / 2)] : 0;
+      var thr = Math.max(0.0046, med * 0.08), runs = [], st = -1;
+      for (i = 0; i < nf; i++) { if (e[i] > thr) { if (st < 0) st = i; } else if (st >= 0) { runs.push([st, i]); st = -1; } }
+      if (st >= 0) runs.push([st, nf]);
+      if (runs.length >= 2) {
+        if (runs[0][1] - runs[0][0] <= 8 && runs[1][0] - runs[0][1] >= 15) out[0] = Math.max(0, runs[1][0] * 0.01 - 0.03);
+        var L = runs.length; if (runs[L - 1][1] - runs[L - 1][0] <= 8 && runs[L - 1][0] - runs[L - 2][1] >= 18) out[1] = Math.min(buf.duration, runs[L - 2][1] * 0.01 + 0.08);
+      }
+    } catch (er) {}
+    if (out[1] - out[0] < 0.15) out = [0, buf.duration];
+    return (buf._tr = out);
+  }
+  LN._edgeTrim = function (b) { return edgeTrim(b); };
   function fadeTo(ac, dur) {
     try {
       var g = ac.createGain(), t0 = ac.currentTime, fi = Math.min(0.012, dur / 4), fo = Math.min(0.04, dur / 4);
@@ -524,9 +544,10 @@
         dbg('PHÁT', t, 'audio=' + ac.state);
         var s = ac.createBufferSource(); s.buffer = buf;
         s.playbackRate.value = 1;   // giữ nguyên giọng gốc trên mọi máy (đổi tốc độ sẽ làm méo/lệch giọng)
-        s.connect(fadeTo(ac, buf.duration));
+        var tr = edgeTrim(buf);
+        s.connect(fadeTo(ac, tr[1] - tr[0]));
         s.onended = function () { VP.lastEnd = Date.now(); if (VP.src === s) { VP.src = null; duck(false); if (onend) onend(); } };
-        VP.src = s; duck(true); s.start(0);
+        VP.src = s; duck(true); s.start(0, tr[0], tr[1] - tr[0]);
       };
       if (ac.state !== 'running' && ac.resume) {
         var done = false;
@@ -2311,4 +2332,4 @@
   LN.boot = function () { route(); };
 })();
 ;
-(window.LN_V=window.LN_V||{})["app.js"]="0606c337";
+(window.LN_V=window.LN_V||{})["app.js"]="0bc9fddd";
