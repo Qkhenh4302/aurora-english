@@ -70,18 +70,19 @@
     return null;
   }
   /* Gọi Gemini (Google AI Studio). Thử lần lượt các model; model 2.5 tắt "thinking" để trả lời nhanh. */
+  var NOTHINK = {};
   function call(key, task, p, models) {
     var body = build(task, p); if (!body) return Promise.reject(new Error('bad task'));
     var list0 = (models && models.length ? models : API.defaultModels).filter(Boolean), i = 0, lastErr = null;
     function next() {
       if (i >= list0.length) return Promise.reject(lastErr || new Error('no model'));
       var model = list0[i++], b = JSON.parse(JSON.stringify(body));
-      if (/2\.5/.test(model)) b.generationConfig.thinkingConfig = { thinkingBudget: 0 };
+      if (/2\.5/.test(model)) b.generationConfig.thinkingConfig = { thinkingBudget: 0 }; else if (!NOTHINK[model]) b.generationConfig.thinkingConfig = { thinkingLevel: 'low' };   // Gemini 3: giảm "suy nghĩ" (tính tiền)
       return fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent', {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(b)
       }).then(function (r) {
         return r.text().then(function (tx) {
-          if (!r.ok) { lastErr = new Error('gemini ' + r.status + ': ' + tx.slice(0, 300)); lastErr.status = r.status; if (r.status === 404 || r.status === 400 || r.status === 503) return next(); throw lastErr; }
+          if (!r.ok) { lastErr = new Error('gemini ' + r.status + ': ' + tx.slice(0, 300)); lastErr.status = r.status; if (r.status === 400 && b.generationConfig.thinkingConfig && !/2\.5/.test(model) && !NOTHINK[model]) { NOTHINK[model] = 1; i--; return next(); } if (r.status === 404 || r.status === 400 || r.status === 503) return next(); throw lastErr; }
           var j = JSON.parse(tx), c = j.candidates && j.candidates[0], parts = c && c.content && c.content.parts || [];
           var out = parse(parts.map(function (x) { return x.text || ''; }).join(''));
           if (!out) { lastErr = new Error('empty/blocked response' + (c && c.finishReason ? ' (' + c.finishReason + ')' : '')); throw lastErr; }
@@ -110,4 +111,4 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.AIPROMPTS = API;
 })(this);
 ;
-(window.LN_V=window.LN_V||{})["ai_prompts.js"]="d75dd9c6";
+(window.LN_V=window.LN_V||{})["ai_prompts.js"]="97b3d270";

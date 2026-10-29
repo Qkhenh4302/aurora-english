@@ -31,8 +31,9 @@ async function models(key) {
 
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  const key = process.env.GEMINI_API_KEY || '';
-  if (req.method === 'GET') { res.status(200).json({ ok: !!key, model: key ? (await models(key))[0] : '' }); return; }
+  // Chấm bài / Chíp AI dùng khoá MIỄN PHÍ (GEMINI_FREE_KEY) nếu có; khoá trả tiền GEMINI_API_KEY chỉ để thu giọng
+  const key = process.env.GEMINI_FREE_KEY || process.env.GEMINI_API_KEY || '';
+  if (req.method === 'GET') { res.status(200).json({ ok: !!key, free: !!process.env.GEMINI_FREE_KEY, model: key ? (await models(key))[0] : '' }); return; }
   if (req.method !== 'POST') { res.status(405).json({ error: 'method' }); return; }
   if (!key) { res.status(503).json({ error: 'Chưa cài khoá AI (GEMINI_API_KEY) trên Vercel.' }); return; }
   // chỉ nhận yêu cầu từ chính trang web này

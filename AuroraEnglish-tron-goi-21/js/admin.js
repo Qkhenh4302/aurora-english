@@ -86,7 +86,7 @@
     if (/^(grammar|ai|data|account|roster)$/.test(active)) active = 'caidat';
     function nl(id, href, icon, label) { return '<a href="' + href + '" class="' + (active === id ? 'on' : '') + '">' + ic(icon, 19) + label + '</a>'; }
     LN.render('<div class="adm"><aside class="aside"><a class="brand" href="#/admin">' + LN.logo(36) + '<span class="bname">Aurora <b>English</b></span></a>' +
-      '<span class="aver">Bản cập nhật 51 · 26/10</span><span class="lb">Quản lý</span>' + nl('lop', '#/admin', 'users', 'Lớp học') + nl('hocphi', '#/admin/hocphi', 'money', 'Học phí') + nl('home', '#/admin/tiendo', 'chart', 'Tiến độ học app') + nl('baitap', '#/admin/baitap', 'book', 'Làm bài & sửa bài') + nl('onluyen', '#/admin/onluyen', 'book', '📝 Ôn luyện đề') + nl('ai', '#/admin/ai', 'sound', '🔊 Giọng đọc & AI') + nl('caidat', '#/admin/caidat', 'key', 'Cài đặt') +
+      '<span class="aver">Bản cập nhật 53 · 29/10</span><span class="lb">Quản lý</span>' + nl('lop', '#/admin', 'users', 'Lớp học') + nl('hocphi', '#/admin/hocphi', 'money', 'Học phí') + nl('home', '#/admin/tiendo', 'chart', 'Tiến độ học app') + nl('baitap', '#/admin/baitap', 'book', 'Làm bài & sửa bài') + nl('onluyen', '#/admin/onluyen', 'book', '📝 Ôn luyện đề') + nl('ai', '#/admin/ai', 'sound', '🔊 Giọng đọc & AI') + nl('caidat', '#/admin/caidat', 'key', 'Cài đặt') +
       '<span class="lb">Khác</span><a href="#/">' + ic('eye', 19) + 'Mở trang học sinh</a><a href="#" data-act="a-logout">' + ic('out', 19) + 'Đăng xuất' + (cur() ? ' (' + esc(cur().user) + ')' : '') + '</a></aside>' +
       '<main class="amain">' + staleWarn() + body + '</main></div>');
   }
@@ -406,7 +406,7 @@
       '<div class="card grow"><h2>2. Cài khoá trên Vercel (khuyên dùng)</h2><ol class="small" style="line-height:1.8;padding-left:18px;margin-top:8px">' +
       '<li>Vào <b>aistudio.google.com/apikey</b>, đăng nhập Gmail → <b>Create API key</b> → sao chép khoá (bắt đầu bằng <code>AIza…</code>).</li>' +
       '<li>Vào <b>vercel.com</b> → mở dự án Aurora English → <b>Settings → Environment Variables</b>.</li>' +
-      '<li>Thêm biến: Name <code>GEMINI_API_KEY</code>, Value = khoá vừa chép → <b>Save</b>.</li>' +
+      '<li>Thêm biến: Name <code>GEMINI_FREE_KEY</code>, Value = khoá <b>miễn phí</b> (project không bật Billing) → <b>Save</b>. Khoá này dùng cho tạo đề, chấm bài, Chíp AI.</li><li>Biến <code>GEMINI_API_KEY</code> (khoá trả tiền) chỉ còn dùng để thu giọng.</li>' +
       '<li>Vào <b>Deployments</b> → bấm ⋯ ở bản mới nhất → <b>Redeploy</b>. Xong! Mọi học sinh dùng được ngay.</li></ol>' +
       '<p class="small muted">Khoá nằm trên máy chủ, không lộ ra trình duyệt. Gói miễn phí có giới hạn số lượt mỗi phút/ngày; khi hết lượt, app tự quay về cách chấm cũ.</p></div></div>' +
       (owner ? '<div class="card" style="margin-top:18px"><h2>3. Khoá riêng cho máy này (khi mở file trực tiếp, không qua Vercel)</h2><p class="small muted" style="margin:6px 0 12px">Chỉ dùng trên máy của lớp/cô. Khoá lưu trong trình duyệt của máy này — đừng dán trên máy của học sinh.</p>' +
@@ -1048,4 +1048,4 @@
   };
 })();
 ;
-(window.LN_V=window.LN_V||{})["admin.js"]="e9c29188";
+(window.LN_V=window.LN_V||{})["admin.js"]="c87286de";

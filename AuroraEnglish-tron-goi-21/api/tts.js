@@ -185,8 +185,10 @@ module.exports = async (req, res) => {
     if (b0 && /^gh/.test(b0.action || '')) { await ghHandler(b0, res); return; }
     if (b0 && b0.action === 'key') {   // chỉ cô / quản trị đã đăng nhập: lấy khoá để máy của cô gọi Gemini trực tiếp (lượt dài, ít tốn lượt/ngày)
       res.setHeader('Cache-Control', 'no-store');
-      if (!KEY) { res.status(503).json({ error: 'nokey' }); return; }
+      if (!KEY && !(b0.use === 'text' && process.env.GEMINI_FREE_KEY)) { res.status(503).json({ error: 'nokey' }); return; }
       if (!(await isAdmin(b0.token))) { res.status(401).json({ error: 'login' }); return; }
+      const FREE = process.env.GEMINI_FREE_KEY || '';
+      if (b0.use === 'text' && FREE) { res.status(200).json({ key: FREE, free: true }); return; }   // tạo đề: dùng khoá miễn phí
       res.status(200).json({ key: KEY }); return;
     }
     if (b0 && b0.action === 'check') { res.setHeader('Cache-Control', 'no-store'); res.status(200).json({ ok: !!KEY, admin: await isAdmin(b0.token), voices: GVOICES, models: GMODELS }); return; }

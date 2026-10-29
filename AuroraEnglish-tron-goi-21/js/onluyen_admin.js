@@ -142,7 +142,7 @@
     drawJob();
     var src = null;
     readFile(file, ext).then(function (s) { src = s; setStep(1, ''); return gemKey(); })
-      .then(function (key) { JOB.key = key; return extract(src); })
+      .then(function (key) { JOB.key = key; setStep(1, KFREE ? 'khoá miễn phí' : 'khoá trả tiền'); return extract(src); })
       .then(function (raw) { setStep(2, ''); return explainAll(raw, src); })
       .then(function (T) { setStep(3, ''); return images(T, src).then(function () { return T; }); })
       .then(function (T) {
@@ -192,9 +192,10 @@
   }
 
   /* ---- Gemini (máy của cô gọi trực tiếp bằng khoá lấy từ máy chủ) ---- */
+  var KFREE = false;
   function gemKey() {
-    return fetch('api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'key', token: tok() }) })
-      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok || !j.key) throw new Error(r.status === 401 ? 'Phiên đăng nhập hết hạn, cô đăng nhập lại.' : r.status === 503 ? 'Chưa có khoá Gemini trên máy chủ.' : 'Không lấy được khoá Gemini (' + r.status + ')'); return j.key; }); });
+    return fetch('api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'key', use: 'text', token: tok() }) })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok || !j.key) throw new Error(r.status === 401 ? 'Phiên đăng nhập hết hạn, cô đăng nhập lại.' : r.status === 503 ? 'Chưa có khoá Gemini trên máy chủ.' : 'Không lấy được khoá Gemini (' + r.status + ')'); KFREE = !!j.free; return j.key; }); });
   }
   /* Mẫu AI: hỏi Google danh sách mẫu khoá này dùng được (mẫu cũ bị ngừng cho tài khoản mới), mẫu nào chạy được thì lần sau dùng trước */
   var KEY0 = null, MODELS = null, GOOD = null, FALLBACK = ['gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-flash-latest', 'gemini-3.1-pro-preview', 'gemini-2.5-pro'];
@@ -204,19 +205,22 @@
     return fetch(gemBase() + '/v1beta/models?pageSize=1000', { headers: { 'x-goog-api-key': (JOB && JOB.key) || KEY0 } }).then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) { var L = j && j.models && window.AIPROMPTS ? window.AIPROMPTS.rankModels(j.models) : []; MODELS = L.length ? L.slice(0, 6) : FALLBACK; return MODELS; }, function () { MODELS = FALLBACK; return MODELS; });
   }
+  var NOTHINK = {};
   function gem(parts, opt) {
     return models().then(function (L0) {
       var L = GOOD ? [GOOD].concat(L0.filter(function (m) { return m !== GOOD; })) : L0.slice(), i = 0, last = null, tried = [];
       function next() {
         if (i >= L.length) return Promise.reject(last && last.hard ? last : new Error('Không mẫu AI nào trả lời được. ' + tried.join(' · ')));
         var model = L[i++], body = { contents: [{ role: 'user', parts: parts }], generationConfig: { responseMimeType: 'application/json', temperature: 0.2, maxOutputTokens: opt.max || 32000 } };
-        if (/2\.5/.test(model)) body.generationConfig.thinkingConfig = { thinkingBudget: opt.think == null ? 1024 : opt.think };
+        if (/2\.5/.test(model)) body.generationConfig.thinkingConfig = { thinkingBudget: opt.think == null ? 1024 : opt.think }; else if (!NOTHINK[model]) body.generationConfig.thinkingConfig = { thinkingLevel: 'low' };   // Gemini 3: giảm "suy nghĩ" (tính tiền theo chữ)
         return fetch(gemBase() + '/v1beta/models/' + model + ':generateContent', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': opt.key || JOB.key }, body: JSON.stringify(body) })
           .then(function (r) { return r.text().then(function (tx) {
             if (!r.ok) {
               var msg = ''; try { msg = JSON.parse(tx).error.message; } catch (e) { msg = tx.slice(0, 120); }
               tried.push(model + ': lỗi ' + r.status + (msg ? ' (' + String(msg).slice(0, 90) + ')' : ''));
-              if (r.status === 429) { last = new Error('Gemini báo hết lượt (429) với mẫu ' + model + '. Cô thử lại sau ít phút.'); return next(); }
+              if (r.status === 400 && body.generationConfig.thinkingConfig && !/2\.5/.test(model) && !NOTHINK[model]) { NOTHINK[model] = 1; i--; tried.pop(); return next(); }
+              if (r.status === 402) { last = new Error('Tài khoản Gemini đã hết tiền nạp trước (lỗi 402). Cô nạp thêm trong AI Studio (mục Billing) rồi thử lại.'); last.hard = 1; throw last; }
+              if (r.status === 429) { last = new Error('Gemini báo hết lượt (429) với mẫu ' + model + '. Khoá miễn phí giới hạn số lượt mỗi phút/ngày: cô thử lại sau ít phút; nếu vẫn báo thì lượt trong ngày đã hết, sau 14:00 (giờ VN) có lượt mới.'); return next(); }
               if (r.status === 401 || r.status === 403) { last = new Error('Khoá Gemini bị từ chối (' + r.status + '): ' + String(msg).slice(0, 150)); last.hard = 1; throw last; }
               return next();
             }
@@ -541,4 +545,4 @@
   });
 })();
 ;
-(window.LN_V=window.LN_V||{})["onluyen_admin.js"]="32a1f211";
+(window.LN_V=window.LN_V||{})["onluyen_admin.js"]="f03525ea";

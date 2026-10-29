@@ -232,6 +232,7 @@
       });
       return r.text().then(function (d) {
         d = String(d || '');
+        if (r.status === 402) throw { stop: 'Tài khoản Gemini đã hết tiền nạp trước (lỗi 402). Đã dừng thu để không gọi thừa. Cô nạp thêm trong AI Studio (mục Billing) rồi bấm «Thu tiếp».' };
         if (r.status === 401 || r.status === 403) throw { stop: 'Google từ chối khoá Gemini (' + r.status + '): ' + d.slice(0, 200) };
         if (r.status === 429) {
           if (/per.?day|PerDay|daily|RequestsPerDay/i.test(d)) { var lm = /limit:\s*(\d+)/i.exec(d); markExhausted(model, lm ? +lm[1] : 1); return callBatch(items, voice); }
@@ -280,9 +281,9 @@
         function next() {
           if (i >= L.length) return null;
           var model = L[i++], body = { contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: 'audio/mp3', data: data } }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0, maxOutputTokens: 6000 } };
-          if (/2\.5/.test(model)) body.generationConfig.thinkingConfig = { thinkingBudget: 0 };
+          if (/2\.5/.test(model)) body.generationConfig.thinkingConfig = { thinkingBudget: 0 }; else if (!(LN._noThink || {})[model]) body.generationConfig.thinkingConfig = { thinkingLevel: 'low' };   // Gemini 3: tắt bớt phần "suy nghĩ" (tính tiền) khi chỉ cần nghe chép lại
           return fetch(base + '/v1beta/models/' + model + ':generateContent', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(body) })
-            .then(function (res) { if (!res.ok) { DLAST.verr = (DLAST.verr || '') + model + ':' + res.status + ' '; return next(); } return res.json().then(function (j) {
+            .then(function (res) { if (!res.ok) { DLAST.verr = (DLAST.verr || '') + model + ':' + res.status + ' '; if (res.status === 400 && body.generationConfig.thinkingConfig && !(LN._noThink = LN._noThink || {})[model]) { LN._noThink[model] = 1; i--; } if (res.status === 402) return null; return next(); } return res.json().then(function (j) {
               var t = ((((j.candidates || [])[0] || {}).content || {}).parts || []).map(function (x) { return x.thought ? '' : x.text || ''; }).join('');
               var o2 = null; try { o2 = JSON.parse(t.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '')); } catch (e) {}
               var arr = o2 && Array.isArray(o2.t) ? o2.t : null;
@@ -628,4 +629,4 @@
   };
 })();
 ;
-(window.LN_V=window.LN_V||{})["gemgen.js"]="05ba7ac2";
+(window.LN_V=window.LN_V||{})["gemgen.js"]="038ba31f";
