@@ -1720,6 +1720,49 @@ table.sh { border-collapse: separate; border-spacing: 0; font-size: 14px; width:
 .ld{position:relative;animation:ldp 1s ease-in-out infinite}
 @keyframes ldp{0%,100%{opacity:1}50%{opacity:.45}}
 .gvtools .btn { max-width: 100%; white-space: normal; text-align: left; }
+/* ---- Phiếu báo học phí (gọn, nhấn vào số tiền cần đóng) ---- */
+.rp.rp2 { border-top-width: 8px; padding: 18px 18px 14px; }
+.rp2 .rp-h { border-bottom: 1px solid #EFE2E7; }
+.rp2 .rp-h em { background: #FFF1D6; color: #7A5200; }
+.rp2 .rp-who { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 14px 0 12px; }
+.rp2 .rp-who b { font-family: Mali, sans-serif; font-size: 24px; line-height: 1.2; }
+.rp2 .rp-who span { font-size: 14px; font-weight: 700; color: var(--ink2); display: inline; }
+.rp-pay { background: #FFF2F6; border: 2px solid #F6C3D3; border-radius: 18px; padding: 14px 14px 12px; }
+.rp-pay.ok { background: #E6F7EF; border-color: #A9E3C9; }
+.rp-sum span { display: block; font-size: 12.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--pink-dk); }
+.rp-pay.ok .rp-sum span, .rp-pay.ok .rp-sum > b { color: var(--mint-dk); }
+.rp-sum > b { display: block; font-family: Mali, sans-serif; font-size: 34px; line-height: 1.2; color: var(--pink-dk); margin: 2px 0; }
+.rp-sum small { font-size: 14px; font-weight: 700; color: #3B2A3A; }
+.rp-warn { margin: 10px 0 2px; background: #FFE1DE; color: var(--red-dk); border-radius: 12px; padding: 8px 10px; font-size: 13.5px; font-weight: 700; }
+.rp2 .rp-t { margin-top: 8px; border-top: 1px solid rgba(0,0,0,.06); }
+.rp2 .rp-t td { border-bottom: 1px dashed rgba(0,0,0,.08); }
+.rp2 .rp-t tr.old td { font-weight: 800; }
+.rp-credit { margin: 6px 0 0; font-size: 13px; font-weight: 700; color: var(--mint-dk); }
+.rp2 .rp-qr { background: #fff; border: none; margin-top: 12px; }
+.rp-att { margin-top: 14px; }
+.rp-att .rp-cnt { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.rp-att .rp-cnt span { font-size: 12.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--ink2); margin-right: 2px; }
+.rp-att .rp-cnt b { font-size: 13px; padding: 3px 10px; border-radius: 999px; }
+.rp-att .rp-cnt b.p { background: var(--mint-soft); color: var(--mint-dk); } .rp-att .rp-cnt b.a { background: var(--red-soft); color: var(--red-dk); } .rp-att .rp-cnt b.e { background: var(--yel-soft); color: #8A6200; }
+.rp2 .rp-s { font-size: 12px; }
+.rp2 .rp-f { border-top: 1px solid #EFE2E7; padding-top: 10px; margin-top: 10px; }
+.rp2 .rp-who { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0 10px; background: #F6F0FF; border-left: 6px solid var(--c); border-radius: 16px; padding: 10px 14px; margin: 14px 0 12px; }
+.rp2 .rp-who span { grid-column: 1; font-size: 11.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--ink2); display: block; }
+.rp2 .rp-who b { grid-column: 1; font-size: 28px; }
+.rp2 .rp-who em { grid-column: 2; grid-row: 1 / span 2; font-style: normal; font-weight: 800; font-size: 14px; background: #fff; border: 2px solid var(--c); border-radius: 999px; padding: 4px 12px; white-space: nowrap; }
+.rp-att h4 { font-size: 12.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--ink2); margin: 0 0 8px; }
+.rp-ag { display: grid; gap: 6px; }
+.rp-ar { display: grid; grid-template-columns: 128px 1fr; gap: 8px; align-items: start; border-radius: 12px; padding: 7px 10px; font-size: 13.5px; }
+.rp-al { display: inline-flex; align-items: center; gap: 6px; font-weight: 800; white-space: nowrap; }
+.rp-al i { font-style: normal; width: 20px; height: 20px; border-radius: 50%; background: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 900; flex: none; }
+.rp-ad { font-weight: 700; color: #3B2A3A; line-height: 1.5; }
+.rp-ar.p { background: #EAF8F1; } .rp-ar.p .rp-al { color: var(--mint-dk); }
+.rp-ar.a { background: #FFE9E7; } .rp-ar.a .rp-al { color: var(--red-dk); }
+.rp-ar.e { background: #FFF6D9; } .rp-ar.e .rp-al { color: #8A6200; }
+.rp-ar.off { background: #F1EEF0; } .rp-ar.off .rp-al, .rp-ar.off .rp-ad { color: #7A6874; }
+.rp-ar.n { background: #F3F6FA; } .rp-ar.n .rp-al { color: #5A6B80; }
+@media (max-width: 420px) { .rp-ar { grid-template-columns: 1fr; gap: 2px; } }
+.rp-ad > span { white-space: nowrap; }
 
 /* ===================== Đại chiến quái vật (monster) ===================== */
 .monster-wrap { max-width: 820px; }
@@ -2295,7 +2338,7 @@ table.sh { border-collapse: separate; border-spacing: 0; font-size: 14px; width:
 </style>
 </head>
 <body>
-<div id="app"><p style="padding:40px;font-family:sans-serif">Đang tải Aurora English… (lần đầu có thể mất vài giây)</p></div><script>window.LN_EXPECT={"data.js": "986158f1", "units4.js": "87455823", "grammar_data.js": "73e60e5a", "explain4.js": "fbce3e67", "art.js": "bbf5baf7", "ex_fixes.js": "b02f497d", "app.js": "31d895c2", "games.js": "95da3d9c", "games_a.js": "fee8a804", "games_b.js": "e92d6ae3", "ai_prompts.js": "97b3d270", "ai.js": "2a2d5128", "cloud.js": "72840882", "importer.js": "61229f68", "onluyen.js": "f2c9d455", "admin.js": "c87286de", "gemgen.js": "038ba31f", "qr_lib.js": "9fc6651e", "lop_core.js": "b88675ae", "lop_seed.js": "75f3f55b", "admin_lop.js": "6ff16d96", "ol_sample.js": "93fb9ddd", "onluyen_admin.js": "f03525ea"};window.LN_VPV="1ea29492";window.LN_LAZY={"1": ["js/units1.js?v=1729eee9"], "2": ["js/units1.js?v=1729eee9", "js/units3.js?v=dbd39687", "js/units2.js?v=60e7f633"], "3": ["js/units3.js?v=dbd39687"], "101": ["js/art_eu1.js?v=dc79dec9", "js/units_eu1.js?v=f7682d75"], "102": ["js/art_eu1.js?v=dc79dec9", "js/art_eu2.js?v=84a963e1", "js/units_eu2.js?v=06b377f9"]};window.__lnErr=function(s){var a=document.getElementById("app");if(a&&!window.__lnOk)a.innerHTML="<p style=\"padding:40px;font-family:sans-serif\">Không tải được tệp: "+String(s).split("/").pop()+"<br>Kiểm tra mạng rồi bấm F5 để tải lại.</p>";};window.addEventListener("error",function(e){if(!window.__lnOk&&e&&e.message)__lnErr("lỗi: "+e.message);});</script>
+<div id="app"><p style="padding:40px;font-family:sans-serif">Đang tải Aurora English… (lần đầu có thể mất vài giây)</p></div><script>window.LN_EXPECT={"data.js": "986158f1", "units4.js": "87455823", "grammar_data.js": "73e60e5a", "explain4.js": "fbce3e67", "art.js": "bbf5baf7", "ex_fixes.js": "b02f497d", "app.js": "31d895c2", "games.js": "95da3d9c", "games_a.js": "fee8a804", "games_b.js": "e92d6ae3", "ai_prompts.js": "97b3d270", "ai.js": "2a2d5128", "cloud.js": "72840882", "importer.js": "61229f68", "onluyen.js": "f2c9d455", "admin.js": "cb165c12", "gemgen.js": "038ba31f", "qr_lib.js": "9fc6651e", "lop_core.js": "b88675ae", "lop_seed.js": "75f3f55b", "admin_lop.js": "c07b7b19", "ol_sample.js": "93fb9ddd", "onluyen_admin.js": "3f397864"};window.LN_VPV="1ea29492";window.LN_LAZY={"1": ["js/units1.js?v=1729eee9"], "2": ["js/units1.js?v=1729eee9", "js/units3.js?v=dbd39687", "js/units2.js?v=60e7f633"], "3": ["js/units3.js?v=dbd39687"], "101": ["js/art_eu1.js?v=dc79dec9", "js/units_eu1.js?v=f7682d75"], "102": ["js/art_eu1.js?v=dc79dec9", "js/art_eu2.js?v=84a963e1", "js/units_eu2.js?v=06b377f9"]};window.__lnErr=function(s){var a=document.getElementById("app");if(a&&!window.__lnOk)a.innerHTML="<p style=\"padding:40px;font-family:sans-serif\">Không tải được tệp: "+String(s).split("/").pop()+"<br>Kiểm tra mạng rồi bấm F5 để tải lại.</p>";};window.addEventListener("error",function(e){if(!window.__lnOk&&e&&e.message)__lnErr("lỗi: "+e.message);});</script>
 <noscript><p style="padding:40px">Trang này cần bật JavaScript.</p></noscript>
 <script src="js/data.js?v=986158f1" onerror="__lnErr(this.src)"></script>
 <script src="js/units4.js?v=87455823" onerror="__lnErr(this.src)"></script>
@@ -2312,14 +2355,14 @@ table.sh { border-collapse: separate; border-spacing: 0; font-size: 14px; width:
 <script src="js/cloud.js?v=72840882" onerror="__lnErr(this.src)"></script>
 <script src="js/importer.js?v=61229f68" onerror="__lnErr(this.src)"></script>
 <script src="js/onluyen.js?v=f2c9d455" onerror="__lnErr(this.src)"></script>
-<script src="js/admin.js?v=c87286de" onerror="__lnErr(this.src)"></script>
+<script src="js/admin.js?v=cb165c12" onerror="__lnErr(this.src)"></script>
 <script src="js/gemgen.js?v=038ba31f" onerror="__lnErr(this.src)"></script>
 <script src="js/qr_lib.js?v=9fc6651e" onerror="__lnErr(this.src)"></script>
 <script src="js/lop_core.js?v=b88675ae" onerror="__lnErr(this.src)"></script>
 <script src="js/lop_seed.js?v=75f3f55b" onerror="__lnErr(this.src)"></script>
-<script src="js/admin_lop.js?v=6ff16d96" onerror="__lnErr(this.src)"></script>
+<script src="js/admin_lop.js?v=c07b7b19" onerror="__lnErr(this.src)"></script>
 <script src="js/ol_sample.js?v=93fb9ddd" onerror="__lnErr(this.src)"></script>
-<script src="js/onluyen_admin.js?v=f03525ea" onerror="__lnErr(this.src)"></script>
+<script src="js/onluyen_admin.js?v=3f397864" onerror="__lnErr(this.src)"></script>
 <script>
 window.LN.boot();window.__lnOk=1;
 </script>

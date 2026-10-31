@@ -205,6 +205,42 @@
     return fetch(gemBase() + '/v1beta/models?pageSize=1000', { headers: { 'x-goog-api-key': (JOB && JOB.key) || KEY0 } }).then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) { var L = j && j.models && window.AIPROMPTS ? window.AIPROMPTS.rankModels(j.models) : []; MODELS = L.length ? L.slice(0, 6) : FALLBACK; return MODELS; }, function () { MODELS = FALLBACK; return MODELS; });
   }
+
+  /* Gọi Gemini kiểu "trả dần" (stream): thấy được AI đang viết tới đâu, và nếu im quá 2 phút thì bỏ, thử mẫu khác */
+  function send(model, body, opt) {
+    var ac = window.AbortController ? new AbortController() : null, timer = 0, stalled = false;
+    function arm() { clearTimeout(timer); timer = setTimeout(function () { stalled = true; if (ac) ac.abort(); }, 120000); }
+    arm();
+    return fetch(gemBase() + '/v1beta/models/' + model + ':streamGenerateContent?alt=sse', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': opt.key || JOB.key }, body: JSON.stringify(body), signal: ac ? ac.signal : undefined })
+      .then(function (r) {
+        var ct = (r.headers.get('content-type') || '');
+        if (!r.ok || !r.body || !r.body.getReader || ct.indexOf('event-stream') < 0) {
+          return r.text().then(function (tx) {
+            clearTimeout(timer);
+            if (!r.ok) return { ok: false, status: r.status, tx: tx };
+            var t = '', fin = '';
+            try { var j = JSON.parse(tx); (Array.isArray(j) ? j : [j]).forEach(function (o) { var c = o.candidates && o.candidates[0]; if (c) { if (c.finishReason) fin = c.finishReason; ((c.content && c.content.parts) || []).forEach(function (x) { if (!x.thought) t += x.text || ''; }); } }); } catch (e) { t = tx; }
+            return { ok: true, t: t, fin: fin };
+          });
+        }
+        var rd = r.body.getReader(), dec = new TextDecoder(), buf = '', t = '', fin = '';
+        function pump() {
+          return rd.read().then(function (x) {
+            if (x.done) { clearTimeout(timer); return { ok: true, t: t, fin: fin }; }
+            arm(); buf += dec.decode(x.value, { stream: true });
+            var lines = buf.split('\n'); buf = lines.pop();
+            lines.forEach(function (ln) {
+              if (ln.indexOf('data:') !== 0) return;
+              try { var o = JSON.parse(ln.slice(5)), c = o.candidates && o.candidates[0]; if (c) { if (c.finishReason) fin = c.finishReason; ((c.content && c.content.parts) || []).forEach(function (p) { if (!p.thought) t += p.text || ''; }); } } catch (e) {}
+            });
+            if (opt.onProg) { try { opt.onProg(t); } catch (e) {} }
+            return pump();
+          });
+        }
+        return pump();
+      }, function (e) { clearTimeout(timer); if (stalled) { var er = new Error('stall'); er.stall = 1; throw er; } throw e; })
+      .catch(function (e) { clearTimeout(timer); if (stalled && !e.stall) { var er = new Error('stall'); er.stall = 1; throw er; } throw e; });
+  }
   var NOTHINK = {};
   function gem(parts, opt) {
     return models().then(function (L0) {
@@ -213,8 +249,8 @@
         if (i >= L.length) return Promise.reject(last && last.hard ? last : new Error('Không mẫu AI nào trả lời được. ' + tried.join(' · ')));
         var model = L[i++], body = { contents: [{ role: 'user', parts: parts }], generationConfig: { responseMimeType: 'application/json', temperature: 0.2, maxOutputTokens: opt.max || 32000 } };
         if (/2\.5/.test(model)) body.generationConfig.thinkingConfig = { thinkingBudget: opt.think == null ? 1024 : opt.think }; else if (!NOTHINK[model]) body.generationConfig.thinkingConfig = { thinkingLevel: 'low' };   // Gemini 3: giảm "suy nghĩ" (tính tiền theo chữ)
-        return fetch(gemBase() + '/v1beta/models/' + model + ':generateContent', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': opt.key || JOB.key }, body: JSON.stringify(body) })
-          .then(function (r) { return r.text().then(function (tx) {
+        return send(model, body, opt)
+          .then(function (r) { var tx = r.tx; return (function () {
             if (!r.ok) {
               var msg = ''; try { msg = JSON.parse(tx).error.message; } catch (e) { msg = tx.slice(0, 120); }
               tried.push(model + ': lỗi ' + r.status + (msg ? ' (' + String(msg).slice(0, 90) + ')' : ''));
@@ -224,14 +260,14 @@
               if (r.status === 401 || r.status === 403) { last = new Error('Khoá Gemini bị từ chối (' + r.status + '): ' + String(msg).slice(0, 150)); last.hard = 1; throw last; }
               return next();
             }
-            var j = JSON.parse(tx), c = j.candidates && j.candidates[0], t = c && c.content && (c.content.parts || []).map(function (x) { return x.thought ? '' : x.text || ''; }).join('');
+            var c = { finishReason: r.fin }, t = r.t;
             var out = parseJ(t);
             if (!out) {
               if (c && c.finishReason === 'MAX_TOKENS') { last = new Error('Đề dài quá, AI không viết hết được. Cô chia file làm hai phần rồi tạo hai đề nhé.'); last.hard = 1; throw last; }
               tried.push(model + ': trả về dữ liệu hỏng' + (c && c.finishReason ? ' (' + c.finishReason + ')' : '')); return next();
             }
             GOOD = model; return out;
-          }); }, function (e) { if (e && e.hard) throw e; tried.push(model + ': mạng lỗi'); return next(); });
+          })(); }, function (e) { if (e && e.hard) throw e; tried.push(model + (e && e.stall ? ': không trả lời quá 2 phút' : ': mạng lỗi')); return next(); });
       }
       return next();
     });
@@ -261,7 +297,7 @@
   var IMG_DOCX = 'pictures appear in the text as [[IMGn]] and are attached after the document; use {"t":"img","ref":"IMGn","cap":"short Vietnamese caption"} placed right before its question. Skip logos and decorations.';
   function extract(src) {
     var parts = [{ text: EXTRACT.replace('IMAGE_RULE', src.kind === 'pdf' ? IMG_PDF : src.kind === 'docx' ? IMG_DOCX : 'not applicable.') + '\n\n' + src.note }].concat(src.parts);
-    return gem(parts, { max: 60000, think: 2048 }).then(function (j) {
+    return gem(parts, { max: 60000, think: 2048, onProg: function (t) { var n = (t.match(/"n"\s*:/g) || []).length; JOB.sub = (KFREE ? 'khoá miễn phí · ' : '') + (n ? 'đã đọc được ' + n + ' câu…' : 'AI đang đọc file…'); } }).then(function (j) {
       if (!j || !Array.isArray(j.parts) || !j.parts.length) throw new Error('AI không đọc ra được phần nào của đề.');
       return j;
     });
@@ -545,4 +581,4 @@
   });
 })();
 ;
-(window.LN_V=window.LN_V||{})["onluyen_admin.js"]="f03525ea";
+(window.LN_V=window.LN_V||{})["onluyen_admin.js"]="3f397864";
