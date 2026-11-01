@@ -86,9 +86,9 @@
     if (/^(grammar|ai|data|account|roster)$/.test(active)) active = 'caidat';
     function nl(id, href, icon, label) { return '<a href="' + href + '" class="' + (active === id ? 'on' : '') + '">' + ic(icon, 19) + label + '</a>'; }
     LN.render('<div class="adm"><aside class="aside"><a class="brand" href="#/admin">' + LN.logo(36) + '<span class="bname">Aurora <b>English</b></span></a>' +
-      '<span class="aver">Bản cập nhật 55 · 31/10</span><span class="lb">Quản lý</span>' + nl('lop', '#/admin', 'users', 'Lớp học') + nl('hocphi', '#/admin/hocphi', 'money', 'Học phí') + nl('home', '#/admin/tiendo', 'chart', 'Tiến độ học app') + nl('baitap', '#/admin/baitap', 'book', 'Làm bài & sửa bài') + nl('onluyen', '#/admin/onluyen', 'book', '📝 Ôn luyện đề') + nl('ai', '#/admin/ai', 'sound', '🔊 Giọng đọc & AI') + nl('caidat', '#/admin/caidat', 'key', 'Cài đặt') +
+      '<span class="aver">Bản cập nhật 57 · 1/11</span><span class="lb">Quản lý</span>' + nl('lop', '#/admin', 'users', 'Lớp học') + nl('hocphi', '#/admin/hocphi', 'money', 'Học phí') + nl('home', '#/admin/tiendo', 'chart', 'Tiến độ học app') + nl('baitap', '#/admin/baitap', 'book', 'Làm bài & sửa bài') + nl('onluyen', '#/admin/onluyen', 'book', '📝 Ôn luyện đề') + nl('ai', '#/admin/ai', 'sound', '🔊 Giọng đọc & AI') + nl('caidat', '#/admin/caidat', 'key', 'Cài đặt') +
       '<span class="lb">Khác</span><a href="#/">' + ic('eye', 19) + 'Mở trang học sinh</a><a href="#" data-act="a-logout">' + ic('out', 19) + 'Đăng xuất' + (cur() ? ' (' + esc(cur().user) + ')' : '') + '</a></aside>' +
-      '<main class="amain">' + staleWarn() + body + '</main></div>');
+      '<main class="amain">' + body + '</main></div>');
   }
 
   LN.adminShell = shell; LN.adminSummary = function (un, d) { return summary(un, d); }; LN.drawChick = function (c, x, y, sz) { drawChick(c, x, y, sz); };
@@ -1048,4 +1048,4 @@
   };
 })();
 ;
-(window.LN_V=window.LN_V||{})["admin.js"]="cb165c12";
+(window.LN_V=window.LN_V||{})["admin.js"]="0b5e857f";
